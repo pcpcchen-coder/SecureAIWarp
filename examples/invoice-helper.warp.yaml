@@ -1,0 +1,123 @@
+# 範例：一個本機網頁應用的權限宣告
+# 情境：使用者選擇一個發票資料夾，工具用模型擷取欄位並換算幣別。
+# 這是 v0.1 草案格式，欄位名稱尚未定案。
+
+warp: "0.1"
+
+app:
+  name: invoice-helper
+  display_name: 發票小幫手
+  version: 1.4.0
+  kind: local-web                 # cli | desktop | local-web | hosted | mcp-server | agent | job
+  entry: ["python", "-m", "invoice_helper", "--port", "8080"]
+  digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+  author_note: 協助整理發票並換算幣別   # 未經驗證的自述，標籤上會如此標示
+
+runtime:
+  isolation: container            # 最低要求：process | container | microvm | wasm
+  resources:
+    cpu: 1
+    memory: 512Mi
+    pids: 128
+    disk: 1Gi
+  spawn: none                     # none | listed | any（any 需列入例外）
+  background: false               # 關閉視窗後不得常駐
+
+files:
+  - path: "${APP_DATA}"
+    mode: rw
+    purpose: 儲存設定與處理結果
+  - path: "${USER_PICK:invoices}"
+    mode: ro
+    purpose: 讀取你選定的發票資料夾
+
+network:
+  egress:
+    - host: api.anthropic.com
+      port: 443
+      via: ai-gate
+      purpose: 分析發票內容
+    - host: api.frankfurter.app
+      port: 443
+      purpose: 查詢匯率
+      limits:
+        upload_per_day: 1Mi       # 查匯率不需要上傳大量資料
+  ingress:
+    - listen: 8080
+      expose: loopback            # loopback | lan | public
+      auth: local-token
+      purpose: 提供操作介面
+
+secrets:
+  - name: ANTHROPIC_API_KEY
+    provided_by: recipient        # recipient | author
+    bind:
+      host: api.anthropic.com
+      inject:
+        header: x-api-key
+    visibility: gate-only         # 應用只看得到佔位值
+
+ai:
+  providers:
+    - host: api.anthropic.com
+      models: ["claude-haiku-5-5", "claude-sonnet-5-5"]
+  budget:
+    daily_usd: 5
+    per_request_tokens: 8000
+  tools:
+    - name: extract_invoice_fields
+      risk: low
+    - name: convert_currency
+      risk: low
+
+data:
+  classes:
+    - id: financial.invoice
+      source: files[1]
+    - id: pii.contact
+      source: files[1]
+  flows:
+    - class: financial.invoice
+      to: [network.egress[0]]
+      purpose: 送交模型擷取欄位
+    - class: pii.contact
+      to: [network.egress[0]]
+      purpose: 發票上的聯絡資訊會隨內容送交模型
+  retention:
+    location: "${APP_DATA}"
+    days: 90
+
+supply_chain:
+  sbom: sbom.json
+  build_sources: [pypi.org, files.pythonhosted.org]
+  scan:
+    date: "2026-11-20"
+    critical: 0
+    high: 0
+    suspicious_packages: []
+
+exceptions: []                    # 沒有任何超出軟性規則的授權
+
+evidence:
+  - grant: files[0]
+    observed_in: .warp/evidence/trace-0001.json
+    triggered_by: tests/test_settings.py::test_save_settings
+  - grant: files[1]
+    observed_in: .warp/evidence/trace-0003.json
+    triggered_by: tests/test_ingest.py::test_read_folder
+  - grant: network.egress[0]
+    observed_in: .warp/evidence/trace-0004.json
+    triggered_by: tests/test_extract.py::test_extract_fields
+  - grant: network.egress[1]
+    observed_in: .warp/evidence/trace-0007.json
+    triggered_by: tests/test_fx.py::test_convert_usd
+  - grant: network.ingress[0]
+    observed_in: .warp/evidence/trace-0002.json
+    triggered_by: tests/test_ui.py::test_home_page
+
+# 側錄期間觀察到、但判定不需要而維持阻擋的行為（僅供說明，不產生授權）
+denied_by_design:
+  - behavior: "對外連線 telemetry.example-ui-lib.dev:443"
+    reason: 介面套件的使用統計回報；阻擋後功能測試全數通過
+  - behavior: "讀取 ~/.config"
+    reason: 設定函式庫的預設搜尋路徑；殼內不存在此路徑，應用改用 APP_DATA
