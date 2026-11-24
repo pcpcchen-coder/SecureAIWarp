@@ -93,7 +93,20 @@ func StartIngress(innerPort, preferPort int, token string, dial func(port int) (
 		},
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				return dial(innerPort)
+				// The app may still be starting: retry "connection refused"
+				// for a few seconds instead of failing the first request.
+				deadline := time.Now().Add(10 * time.Second)
+				for {
+					c, err := dial(innerPort)
+					if err == nil || time.Now().After(deadline) || !strings.Contains(err.Error(), "refused") {
+						return c, err
+					}
+					select {
+					case <-ctx.Done():
+						return nil, ctx.Err()
+					case <-time.After(100 * time.Millisecond):
+					}
+				}
 			},
 			MaxIdleConnsPerHost: 4,
 			IdleConnTimeout:     30 * time.Second,

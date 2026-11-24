@@ -1,0 +1,322 @@
+//go:build linux
+
+package e2e
+
+import (
+	"encoding/json"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// TestNotesAppLifecycle walks the full fitting protocol on a well-behaved
+// app: record -> draft -> lint -> enforce (functions still work) -> probe
+// (every boundary holds) -> label (L2) -> ledger verify.
+func TestNotesAppLifecycle(t *testing.T) {
+	need(t)
+	base := t.TempDir()
+	app := filepath.Join(base, "notes-app")
+	copyDir(t, filepath.Join(h.repo, "examples", "notes-app"), app)
+	synthetic := filepath.Join(base, "synthetic-notes")
+	writeFiles(t, synthetic, map[string]string{"a.txt": "synthetic one\n", "b.txt": "synthetic two\n"})
+	real := filepath.Join(base, "real-notes")
+	writeFiles(t, real, map[string]string{"meeting.txt": "real meeting notes\n", "todo.txt": "real todo\n"})
+	env := warpEnv()
+
+	if r := runWarp(t, env, "init", "-C", app); r.code != 0 {
+		t.Fatalf("init failed")
+	}
+	// Record: the decoy key reaches the API; the real key is never used.
+	r := runWarp(t, env, "record", "-C", app, "--pick", "notes="+synthetic, "--secret", "NOTES_API_KEY", "--", "python3", "app.py", "summarize")
+	if r.code != 0 || !strings.Contains(r.stdout, "summary ok") {
+		t.Fatalf("record summarize failed")
+	}
+	// Record the web UI: operate it through the printed loopback URL.
+	r = runWarpServing(t, env, func(u string) {
+		resp, err := httpClient().Get(u)
+		if err != nil {
+			t.Errorf("GET ingress during record: %v", err)
+			return
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != 200 || !strings.Contains(string(b), "<h1>notes</h1>") {
+			t.Errorf("record ingress: HTTP %d %s", resp.StatusCode, b)
+		}
+	}, "record", "-C", app, "--pick", "notes="+synthetic, "--", "python3", "app.py", "serve", "--once")
+	if r.code != 0 {
+		t.Fatalf("record serve failed")
+	}
+	for _, e := range upstreamEntries(t) {
+		for _, v := range e.Headers["X-Api-Key"] {
+			if v == realKey {
+				t.Fatalf("record mode sent the real key upstream")
+			}
+		}
+	}
+
+	// Draft and fill in purposes, as the Fitter would.
+	if r := runWarp(t, env, "draft", "-C", app); r.code != 0 {
+		t.Fatalf("draft failed")
+	}
+	mf := filepath.Join(app, ".warp", "warp.yaml")
+	drafted, _ := os.ReadFile(mf)
+	mustContain(t, "draft", string(drafted), "${APP_DATA}", "mode: rw", "${USER_PICK:notes}", "mode: ro",
+		"host: api.notes.example", "port: 443", "listen: 8080", "name: NOTES_API_KEY", "header: x-api-key")
+	if strings.Contains(string(drafted), "${APP_CACHE}") {
+		t.Errorf("draft granted APP_CACHE although the app never used it")
+	}
+	if r := runWarp(t, env, "lint", "-C", app); r.code == 0 {
+		t.Fatalf("lint must reject placeholder purposes")
+	}
+	fillPurposes(t, mf)
+	if r := runWarp(t, env, "lint", "-C", app); r.code != 0 {
+		t.Fatalf("lint failed after filling purposes")
+	}
+
+	// Enforce: missing real secret -> refuse (fail closed).
+	if r := runWarp(t, env, "enforce", "-C", app, "--pick", "notes="+real, "--", "python3", "app.py", "summarize"); r.code != 125 {
+		t.Fatalf("enforce without the real secret must refuse, got %d", r.code)
+	}
+	// Enforce with the real key on the host side.
+	envKey := warpEnv("NOTES_API_KEY=" + realKey)
+	r = runWarp(t, envKey, "enforce", "-C", app, "--pick", "notes="+real, "--", "python3", "app.py", "summarize")
+	if r.code != 0 || !strings.Contains(r.stdout, "summary ok: 2 notes") {
+		t.Fatalf("declared behaviour must work under enforce")
+	}
+	if strings.Contains(r.stdout+r.stderr, realKey) {
+		t.Fatalf("real key leaked into app output")
+	}
+	injected := false
+	for _, e := range upstreamEntries(t) {
+		if e.Path == "/v1/summarize" && len(e.Headers["X-Api-Key"]) == 1 && e.Headers["X-Api-Key"][0] == realKey {
+			injected = true
+			if e.Host != "api.notes.example" || !e.TLS {
+				t.Errorf("real key delivered to unexpected place: %+v", e)
+			}
+		}
+	}
+	if !injected {
+		t.Fatalf("gate did not inject the real key over TLS")
+	}
+	summaries, _ := filepath.Glob(filepath.Join(h.state, "apps", "notes-app-*", "data", "summary.json"))
+	if len(summaries) != 1 {
+		t.Fatalf("APP_DATA should persist in the core state dir, got %v", summaries)
+	}
+
+	// Ingress: only loopback + token.
+	r = runWarpServing(t, envKey, func(u string) {
+		noTok := strings.SplitN(u, "?", 2)[0]
+		resp, err := http.Get(noTok)
+		if err != nil {
+			t.Errorf("GET without token: %v", err)
+		} else {
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusUnauthorized {
+				t.Errorf("ingress without token: want 401, got %d", resp.StatusCode)
+			}
+		}
+		resp, err = httpClient().Get(u)
+		if err != nil {
+			t.Errorf("GET with token: %v", err)
+			return
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != 200 || !strings.Contains(string(b), "2 notes") {
+			t.Errorf("ingress with token: HTTP %d %s", resp.StatusCode, b)
+		}
+	}, "enforce", "-C", app, "--pick", "notes="+real, "--", "python3", "app.py", "serve", "--once")
+	if r.code != 0 {
+		t.Fatalf("enforce serve failed")
+	}
+
+	// Probe: every implemented probe must be blocked.
+	r = runWarp(t, env, "probe", "-C", app)
+	if r.code != 0 || !strings.Contains(r.stdout, "全部已實作的探針都被擋下") || strings.Contains(r.stdout, "穿透") {
+		t.Fatalf("probe did not block everything")
+	}
+	var rep struct {
+		Items []struct{ ID, Status string } `json:"items"`
+	}
+	b, _ := os.ReadFile(filepath.Join(app, ".warp", "reports", "probe.json"))
+	json.Unmarshal(b, &rep)
+	ids := map[string]string{}
+	for _, it := range rep.Items {
+		ids[it.ID] = it.Status
+	}
+	for _, id := range []string{"net.connect:169.254.169.254:80", "net.connect:127.0.0.1:22", "net.connect:api.notes.example:22",
+		"ingress.no-token:8080", "ingress.rebind-host:8080", "ingress.control:8080", "secret.env:NOTES_API_KEY",
+		"res.memory", "res.pids", "res.disk", "fs.nested-userns", "host.decoy-intact"} {
+		if ids[id] != "blocked" {
+			t.Errorf("probe %s: status %q", id, ids[id])
+		}
+	}
+
+	// Label: L2 after enforce + probe on the same manifest/digest.
+	r = runWarp(t, env, "label", "-C", app)
+	mustContain(t, "label", r.stdout, "L2 已驗證", "api.notes.example:443", "你選定的一個資料夾（notes）", "看到金鑰的真值", "（無例外）")
+	if _, err := os.Stat(filepath.Join(app, ".warp", "label.json")); err != nil {
+		t.Errorf("label.json missing")
+	}
+	if r := runWarp(t, env, "ledger", "verify", "-C", app); r.code != 0 {
+		t.Fatalf("ledger verify failed")
+	}
+
+	// Diff of a widened manifest.
+	wider := filepath.Join(base, "wider.yaml")
+	s := strings.Replace(string(mustRead(t, mf)), "network:\n  egress:\n", "network:\n  egress:\n    - host: api.stripe.com\n      port: 443\n      purpose: 建立付款連結\n", 1)
+	os.WriteFile(wider, []byte(s), 0o644)
+	r = runWarp(t, env, "diff", mf, wider)
+	mustContain(t, "diff", r.stdout, "＋ 新增對外連線：api.stripe.com:443（用途：建立付款連結）", "風險等級")
+
+	// Tampering with the app invalidates the manifest (content digest).
+	os.WriteFile(filepath.Join(app, "app.py"), append(mustRead(t, filepath.Join(app, "app.py")), []byte("\n# changed\n")...), 0o644)
+	if r := runWarp(t, envKey, "enforce", "-C", app, "--pick", "notes="+real, "--", "python3", "app.py", "summarize"); r.code != 125 || !strings.Contains(r.stderr, "app-digest") {
+		t.Fatalf("enforce must refuse a modified app")
+	}
+}
+
+func mustRead(t *testing.T, p string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// TestEvilAppIsContained records the malicious app in its harmless mode,
+// accepts a manifest for exactly that behaviour, and then runs its attack
+// mode under enforce. Every attack must fail, which is verified both from
+// the app's own report and from outside (host files, upstream server log,
+// host loopback service, ledger).
+func TestEvilAppIsContained(t *testing.T) {
+	need(t)
+	base := t.TempDir()
+	app := filepath.Join(base, "evil-app")
+	copyDir(t, filepath.Join(h.repo, "examples", "evil-app"), app)
+	notes := filepath.Join(base, "notes")
+	writeFiles(t, notes, map[string]string{"salary.txt": "CONFIDENTIAL salary list\n"})
+	env := warpEnv()
+	runWarp(t, env, "init", "-C", app)
+	r := runWarp(t, env, "record", "-C", app, "--pick", "notes="+notes, "--secret", "NOTES_API_KEY", "--", "python3", "app.py", "summarize")
+	if r.code != 0 {
+		t.Fatalf("record failed")
+	}
+	if r := runWarp(t, env, "draft", "-C", app); r.code != 0 {
+		t.Fatalf("draft failed")
+	}
+	mf := filepath.Join(app, ".warp", "warp.yaml")
+	s := fillPurposes(t, mf)
+	mustContain(t, "draft", s, "對外連線 status.notes.example:443") // blocked in record: denied_by_design
+	// The author insists on declaring the status host (its DNS answer points
+	// at loopback, i.e. a rebinding-style attack on a declared host).
+	if strings.Count(s, "  - host: ") != 1 || !strings.Contains(s, "\nsecrets:\n") {
+		t.Fatalf("unexpected draft layout:\n%s", s)
+	}
+	s = strings.Replace(s, "\nsecrets:\n", "\n    - host: status.notes.example\n      port: 443\n      purpose: 服務狀態檢查\nsecrets:\n", 1)
+	s = strings.Replace(s, "\nevidence:\n", "\nevidence:\n  - grant: network.egress[1]\n    observed_in: .warp/evidence/trace-0001.json\n    triggered_by: python3 app.py summarize\n", 1)
+	os.WriteFile(mf, []byte(s), 0o644)
+	if r := runWarp(t, env, "lint", "-C", app); r.code != 0 {
+		t.Fatalf("lint failed for evil manifest:\n%s", s)
+	}
+
+	// Things on the host the app must not touch.
+	victimDir := filepath.Join(base, "victim")
+	writeFiles(t, victimDir, map[string]string{"victim.txt": "important document\n"})
+	victim := filepath.Join(victimDir, "victim.txt")
+	fakeHome := filepath.Join(base, "home")
+	decoy := filepath.Join(fakeHome, ".ssh", "id_rsa")
+	os.MkdirAll(filepath.Dir(decoy), 0o700)
+	os.WriteFile(decoy, []byte("-----BEGIN OPENSSH PRIVATE KEY-----\nwarp-e2e-decoy\n"), 0o600)
+	logBefore := len(upstreamEntries(t))
+
+	r = runWarp(t, warpEnv("NOTES_API_KEY="+realKey), "enforce", "-C", app, "--pick", "notes="+notes, "--",
+		"python3", "app.py", "attack", "--decoy", decoy, "--host-home", fakeHome, "--victim", victim,
+		"--victim-dir", victimDir, "--host-service", h.loopURL, "--host-marker", h.loopMarker, "--upstream-ip", upstreamIP)
+	if r.code != 0 {
+		t.Fatalf("attack run crashed (exit %d)", r.code)
+	}
+	attacks := map[string]bool{}
+	for _, line := range strings.Split(r.stdout, "\n") {
+		var a struct {
+			Attack    string `json:"attack"`
+			Succeeded bool   `json:"succeeded"`
+			Detail    string `json:"detail"`
+		}
+		if json.Unmarshal([]byte(line), &a) == nil && a.Attack != "" {
+			attacks[a.Attack] = a.Succeeded
+			if a.Succeeded {
+				t.Errorf("ATTACK SUCCEEDED: %s (%s)", a.Attack, a.Detail)
+			}
+		}
+	}
+	for _, name := range []string{"read_decoy_credential", "read_host_home_ssh", "list_host_dir", "exfil_https_undeclared",
+		"exfil_http_undeclared", "exfil_declared_host_other_port", "exfil_direct_socket", "exfil_dns_lookup",
+		"secret_env_is_real", "secret_reflected_by_api", "secret_to_undeclared_host", "secret_proc_environ",
+		"read_init_environ", "cloud_metadata", "host_loopback_service", "lan_by_name", "lan_by_ip",
+		"rebinding_declared_host", "host_loopback_direct", "write_outside", "write_app_dir", "delete_outside", "rmtree_outside"} {
+		if _, ok := attacks[name]; !ok {
+			t.Errorf("attack %s did not report", name)
+		}
+	}
+	// The real key never reached the app, even though the API reflects headers.
+	if strings.Contains(r.stdout+r.stderr, realKey) {
+		t.Errorf("the real key leaked into the shell")
+	}
+	if !strings.Contains(r.stdout, "warp-placeholder-notes_api_key-") {
+		t.Errorf("expected the placeholder in the reflected headers")
+	}
+	// Outside view: upstream server.
+	for _, e := range upstreamEntries(t)[logBefore:] {
+		if strings.HasPrefix(e.Host, "evil.example") || strings.Contains(e.Path, "collect") || strings.Contains(e.Body, "CONFIDENTIAL") {
+			t.Errorf("exfiltration reached the upstream: %+v", e)
+		}
+		if !strings.HasPrefix(e.Host, "api.notes.example") || !e.TLS {
+			t.Errorf("unexpected upstream request: %+v", e)
+		}
+	}
+	if n := h.loopHits.Load(); n != 0 {
+		t.Errorf("host loopback service was reached %d times", n)
+	}
+	// Outside view: files.
+	if b, err := os.ReadFile(victim); err != nil || string(b) != "important document\n" {
+		t.Errorf("victim file changed or deleted")
+	}
+	if _, err := os.Stat(filepath.Join(victimDir, "pwned.txt")); err == nil {
+		t.Errorf("file written outside the shell")
+	}
+	if _, err := os.Stat(filepath.Join(app, "pwned.txt")); err == nil {
+		t.Errorf("file written into the read-only app directory")
+	}
+	if b, _ := os.ReadFile(decoy); !strings.Contains(string(b), "warp-e2e-decoy") {
+		t.Errorf("decoy credential changed")
+	}
+	// Ledger: every network attempt is recorded as denied.
+	denied := map[string]bool{}
+	redacted := false
+	for _, e := range ledgerEntries(t, "evil-app") {
+		if e["decision"] == "deny" {
+			denied[e["target"].(string)] = true
+			if e["channel"] == "secret" && e["action"] == "redact" {
+				redacted = true
+			}
+		}
+	}
+	for _, tgt := range []string{"evil.example:443", "evil.example:80", "api.notes.example:80", "169.254.169.254:80",
+		strings.TrimSuffix(strings.TrimPrefix(h.loopURL, "http://"), "/"), "lan.notes.example:80", "192.168.1.1:80", "status.notes.example:443"} {
+		if !denied[tgt] {
+			t.Errorf("ledger has no deny entry for %s", tgt)
+		}
+	}
+	if !redacted {
+		t.Errorf("ledger should record the redaction of the reflected key")
+	}
+	if r := runWarp(t, env, "ledger", "verify", "-C", app); r.code != 0 {
+		t.Errorf("ledger verify failed")
+	}
+}

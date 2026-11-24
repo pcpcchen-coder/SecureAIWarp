@@ -149,7 +149,7 @@ func HostAddrs() map[netip.Addr]bool {
 func Check(ip netip.Addr, allowLAN bool, hostAddrs map[netip.Addr]bool) (Class, bool) {
 	ip = ip.Unmap().WithZone("")
 	c := Classify(ip)
-	if hostAddrs[ip] {
+	if hostAddrs[ip] && (c == Public || c == Private) {
 		return HostLocal, false
 	}
 	switch c {
