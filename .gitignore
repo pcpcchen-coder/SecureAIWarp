@@ -1,0 +1,21 @@
+# Build outputs
+/warp
+/bin/
+/dist/
+*.test
+*.out
+
+# Runtime data written by the core inside an app root
+.warp/evidence/
+.warp/reports/
+.warp/label.json
+.warp/warp.draft.yaml
+**/.warp/evidence/
+**/.warp/reports/
+**/.warp/label.json
+
+# Editors / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/
