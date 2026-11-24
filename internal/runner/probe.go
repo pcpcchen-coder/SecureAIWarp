@@ -222,7 +222,11 @@ func Probe(opt Options) (*report.Probe, error) {
 	}
 	rep.Items = append(items, hostItems...)
 	for _, it := range rep.Items {
-		s.led.Log("probe", it.ID, map[bool]string{true: "deny", false: "info"}[it.Status == report.Blocked], it.Name, it.Status)
+		dec := map[string]string{report.Blocked: "deny", report.Penetrated: "allow"}[it.Status]
+		if dec == "" {
+			dec = "info"
+		}
+		s.led.Log("probe", it.ID, dec, it.Name, it.Status)
 	}
 	if err := report.WriteProbe(s.appRoot, rep); err != nil {
 		return rep, err

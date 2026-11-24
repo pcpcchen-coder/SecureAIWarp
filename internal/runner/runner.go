@@ -627,6 +627,9 @@ func human(n int64) string {
 }
 
 func (s *session) notify(msg string) {
+	if s.opt.Mode == ModeProbe {
+		return // the probe report lists every block
+	}
 	s.mu.Lock()
 	s.notified[msg]++
 	n := s.notified[msg]

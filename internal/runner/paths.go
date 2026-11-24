@@ -20,6 +20,11 @@ var credentialEntries = []string{".ssh", ".aws", ".gnupg", ".kube", ".docker", "
 	".git-credentials", ".npmrc", ".pypirc", ".cargo/credentials", ".cargo/credentials.toml",
 	"Library/Keychains", "Library/Application Support/Google/Chrome"}
 
+// homeMarkers are credential directories whose presence directly inside a
+// mount source means it is (or behaves like) a home directory.
+var homeMarkers = []string{".ssh", ".aws", ".gnupg", ".kube", ".azure", ".config/gcloud",
+	".password-store", ".mozilla", ".local/share/keyrings", "Library/Keychains"}
+
 // controlSockets are container runtime control interfaces.
 var controlSockets = []string{"docker.sock", "containerd.sock", "podman.sock", "crio.sock", "dockershim.sock"}
 
@@ -66,10 +71,12 @@ func checkHostMount(what, p string, protect []string) error {
 			}
 		}
 	}
-	for _, c := range credentialEntries {
+	for _, c := range homeMarkers {
 		if _, err := os.Lstat(filepath.Join(p, c)); err == nil {
 			return fmt.Errorf("%s 內含憑證目錄 %s，看起來像家目錄，拒絕掛載：%s", what, c, p)
 		}
+	}
+	for _, c := range credentialEntries {
 		base := filepath.Base(c)
 		if filepath.Base(p) == base && strings.HasPrefix(base, ".") {
 			return fmt.Errorf("%s 看起來是憑證目錄，拒絕掛載：%s", what, p)

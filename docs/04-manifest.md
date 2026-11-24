@@ -11,6 +11,9 @@
 
 完整範例見 [`examples/invoice-helper.warp.yaml`](../examples/invoice-helper.warp.yaml)。
 
+> **第 1 期實作對照**：本文件同時是核心 `warp lint` 的規格。與 v0.1 草案不同、已依實作定案的地方以「（第 1 期）」標出，
+> 並集中整理在第 6 節。宣告檔預設位置為應用根目錄下的 `.warp/warp.yaml`（`-f` 可另指定）。
+
 ## 1. 結構
 
 | 區段 | 對應通道 | 內容 |
@@ -39,7 +42,13 @@ files:
     mode: ro
     purpose: "讀取你選定的發票資料夾"
 ```
-作者機器上的路徑對接收者沒有意義。可用變數只有少數幾個：`APP_DATA`、`APP_CACHE`、`TMP`、`USER_PICK:<名稱>`。
+作者機器上的路徑對接收者沒有意義。可用變數只有少數幾個：`APP_DATA`、`APP_CACHE`、`USER_PICK:<名稱>`。
+
+（第 1 期）
+- `TMP` 不再是變數：殼內一律有私有、拋棄式、有容量上限的 `/tmp`，不需要授權。
+- 不支援絕對路徑（檢查器回報 `files-absolute` 錯誤）；硬性規則中的「家目錄、系統目錄、憑證目錄、容器控制介面」改在**執行期**對實際掛載來源（應用根目錄與每個 `USER_PICK`）檢查，違反即拒絕執行。
+- `<名稱>` 為小寫英數字、`-`、`_`（最多 32 字元）。殼內路徑：`${APP_DATA}` → `/warp/data`、`${APP_CACHE}` → `/warp/cache`、`${USER_PICK:x}` → `/warp/pick/x`（並以環境變數 `APP_DATA`、`APP_CACHE`、`WARP_PICK_X` 告知應用）。
+- `APP_DATA` 存在核心的狀態目錄（預設 `~/.local/state/securewarp/apps/…`），不在應用目錄內。
 
 ### 機密綁定目的地
 ```yaml
@@ -52,6 +61,11 @@ secrets:
     visibility: gate-only          # 應用只看得到佔位值
 ```
 `visibility` 只有兩個值：`gate-only`（預設）與 `app-visible`（需列入例外）。
+
+（第 1 期）
+- 機密也是授權，必須有 `purpose` 與證據（側錄時誘餌值出現在 `bind.host` 的 `bind.inject.header` 標頭中）。
+- `bind.host` 必須同時列在 `network.egress`，且只能是單一具體主機；`inject.header` 不得是 `Host`、`Content-Length`、`Connection` 等傳輸層標頭。
+- 執行時真值取自**執行 warp 的主機上同名的環境變數**，缺少即拒絕執行；殼內只有 `warp-placeholder-…` 佔位值，閘門只在該主機、該標頭中把佔位值換成真值，並把回應中出現的真值遮蔽回佔位值。
 
 ### 工具要標風險
 ```yaml
@@ -74,6 +88,10 @@ evidence:
 ```
 `grant` 以路徑指向宣告中的某一條授權。檢查器會打開側錄檔確認真的有這筆行為。
 
+（第 1 期）`observed_in` 必須是 `.warp/evidence/` 下的相對路徑；側錄檔由核心寫入並以本機金鑰（HMAC-SHA256，存在核心狀態目錄）簽章，
+檢查器拒收簽章不符或被修改的側錄檔。比對規則：`files[i]` 需有該變數根目錄下的存取（`rw` 需有寫入）；`network.egress[i]` 需有連往該主機與連接埠的嘗試；
+`network.ingress[i]` 需有監聽該埠；`secrets[i]` 見上。側錄檔是本機產物：換一台機器（換一把金鑰）就必須重新側錄。
+
 ## 3. 檢查規則
 
 檢查器是確定性的，分兩級。
@@ -91,6 +109,12 @@ evidence:
 | 有 AI 呼叫必須有花費上限 | 錢包阻斷 |
 | 每條授權必須有證據與用途 | 原則四 |
 | 內容雜湊必須與實際檔案相符 | 防掉包 |
+| 對外連線不得指向主機本機（`localhost`、`127.0.0.0/8`、`::1`）（第 1 期新增） | 等同存取主機上的服務 |
+| 名稱含高風險動作（send、email、pay、delete、exec、run…）的工具，風險不得低於 `high`（第 1 期新增） | 核心內建的下限 |
+| 機密的 `bind.host` 必須列在對外連線中、只能注入一般標頭（第 1 期新增） | 注入點必須明確 |
+
+內容雜湊（`app.digest`）的算法：對應用根目錄下（排除最上層的 `.warp/`、`.git/`，這兩者在殼內也被遮蔽）每個檔案、目錄、符號連結的
+相對路徑、類型、權限位元與內容雜湊排序後再取 SHA-256；`warp digest` 可印出目前的值。
 
 ### 軟性規則（可由人工簽核成為例外）
 | 規則 | 例外時標籤上顯示 |
@@ -103,6 +127,28 @@ evidence:
 | 對外主機數量不超過門檻 | 「連線對象較多（N 個）」 |
 
 例外必須寫入 `exceptions`，包含理由、簽核人、時間。**Agent 不能替人簽核**——簽核是透過同意代理產生的紀錄，Agent 無法偽造。
+
+（第 1 期）軟性規則的識別碼與例外格式：
+
+| 規則識別碼 | 觸發條件 |
+| --- | --- |
+| `secret-app-visible` | `visibility: app-visible` |
+| `egress-subdomain-wildcard` | `host: "*.example.com"`（萬用字元只允許在最左邊一層，且底下至少兩層） |
+| `pick-writable` | `${USER_PICK:…}` 為 `rw` |
+| `spawn-any` | `runtime.spawn: any` |
+| `egress-lan` | 對外連線標示 `lan: true`（只有標示者可連往私有位址；本機迴路、連結本地、中繼資料永遠不行） |
+| `egress-many-hosts` | 對外連線超過 10 條（`grant: network.egress`） |
+
+```yaml
+exceptions:
+  - rule: egress-subdomain-wildcard
+    grant: network.egress[0]
+    reason: 供應商以 CDN 子網域分流
+    approved_by: 王小明
+    approved_at: "2026-11-24"
+```
+
+第 1 期尚無同意代理：例外只會讓警告消失並顯示在標籤的「需要你特別注意」區，檢查器會另外警告「簽核紀錄尚未經簽章驗證」。
 
 ## 4. 風險分數
 
@@ -127,3 +173,17 @@ evidence:
 ```
 
 沒有變動的部分不顯示。這是使用者在更新時唯一需要看的東西。
+
+## 6. 第 1 期的格式定案與限制
+
+- **封閉格式的實作**：未知欄位、重複鍵、多份 YAML 文件、錨點／別名（`&`、`*`）、合併鍵（`<<`）、明確型別標記（`!!binary` 等）一律視為錯誤；
+  布林欄位只接受 `true`／`false`（不接受 YAML 1.1 的 `yes`、`no`、`on`、`off`）；數字欄位不接受字串。
+- **新增欄位**：`network.egress[].lan`（布林）、`secrets[].purpose`。
+- **`runtime.isolation`**：此核心只實作 `process`；宣告 `container`、`microvm`、`wasm` 時檢查器警告、強制模式**拒絕執行**（不降級）。
+- **`runtime.spawn`**：可宣告但尚未強制（標籤的「程序」通道標示為「僅聲明」）。`runtime.background: true` 尚未支援。
+- **`runtime.resources`**：`memory`、`pids`、`disk` 以 cgroup（可用時）與 rlimit 盡力套用；未設定時使用預設值（1Gi、256、1Gi）。`cpu` 尚未套用。
+- **`network.egress[].via: ai-gate`**：AI 閘門尚未實作，含此欄位的宣告在強制模式**拒絕執行**。
+- **`network.egress[].limits.upload_per_day`**：以目的地主機:連接埠為單位、依 UTC 日期累計，存在核心狀態目錄。
+- **`network.ingress`**：只支援 `expose: loopback` 搭配 `auth: local-token`，而且只代理 HTTP（WebSocket 升級未經測試）。
+- **`ai`、`data`、`supply_chain`**：只檢查結構與參照（例如 `data.flows[].to` 必須指向存在的 `network.egress[i]`），執行期不強制，標籤標示為「僅聲明」。
+- **`denied_by_design`**：`warp draft` 會把側錄中被核心擋下的連線自動列入。

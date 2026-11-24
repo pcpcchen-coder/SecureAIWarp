@@ -3,7 +3,9 @@
 > 給「沒有人讀過程式碼」的 AI 應用一層可以被信任的**殼**。
 > 殼由 AI Agent 量身安裝，但由確定性的核心強制執行，並用一張人看得懂的**權限標籤**交付給他人。
 
-**狀態：規劃階段（v0.1 設計草案）。** 本儲存庫目前只有設計文件，尚無實作。
+**狀態：第 1 期 MVP（v0.1.0-mvp），僅支援 Linux 的 `process` 隔離後端。** 核心 `warp` 已可側錄、檢查、強制執行、探測並產生標籤；
+macOS、`container` 後端、AI 閘門、資料閘門、`survey`、`seal` 尚未實作（指令會明確回報，不會降級放行）。
+實作與設計的差異、已知弱點見下方〈第 1 期實作狀態〉與 [09 路線圖](docs/09-roadmap.md)。核心尚未經過獨立安全審查，請勿用於高敏感用途。
 
 ---
 
@@ -63,10 +65,64 @@ flowchart LR
 | [08 延伸構想](docs/08-ideas.md) | 試駕模式、後悔藥、保險絲等進一步的點子 |
 | [09 路線圖與待決問題](docs/09-roadmap.md) | 分期、MVP 範圍、成功指標、尚未解決的問題 |
 
-另附兩份具體草稿：
+另附：
 
-- [`examples/invoice-helper.warp.yaml`](examples/invoice-helper.warp.yaml)：一份完整的權限宣告範例
-- [`skills/warp-fitter/SKILL.md`](skills/warp-fitter/SKILL.md)：給安裝 Agent 的操作手冊草稿
+- [`examples/invoice-helper.warp.yaml`](examples/invoice-helper.warp.yaml)：一份完整的權限宣告範例（含第 2 期才會強制的欄位）
+- [`examples/notes-app/`](examples/notes-app/app.py)、[`examples/evil-app/`](examples/evil-app/app.py)：端對端測試用的正常與惡意範例應用
+- [`skills/warp-fitter/SKILL.md`](skills/warp-fitter/SKILL.md)：給安裝 Agent 的操作手冊
+
+## 建置與試用（Linux）
+
+需求：Linux（建議 5.x 以上核心，允許建立使用者命名空間）、Go 1.24。核心是單一靜態執行檔，相依套件只有
+`gopkg.in/yaml.v3` 與 `golang.org/x/sys`。
+
+```bash
+CGO_ENABLED=0 go build -o warp ./cmd/warp
+./warp --version
+```
+
+以範例應用離線走一次 Agent 安裝流程（範例需要 `python3`）：
+
+```bash
+cd examples/notes-app
+mkdir -p /tmp/notes && echo "hello" > /tmp/notes/a.txt
+W=../../warp
+$W init
+$W record --pick notes=/tmp/notes -- python3 app.py count          # 側錄：讀取選定資料夾、寫入 APP_DATA
+$W record -- python3 app.py serve --once                           # 側錄網頁介面：用終端機印出的網址開一次
+$W draft                       # 由側錄紀錄產生 .warp/warp.yaml 初稿
+$EDITOR .warp/warp.yaml        # 收緊、填寫每條 purpose；把 app.entry 改成正式啟動指令
+$W lint                        # 硬性規則、證據檢核
+$W enforce --pick notes=/tmp/notes -- python3 app.py count          # 強制模式
+$W enforce -- python3 app.py serve --once                           # 會印出含一次性權杖的本機網址
+$W probe                       # 在強制模式的殼內主動越界，每一項都必須被擋下
+$W label                       # 權限標籤（終端機 + .warp/label.json）
+$W ledger verify               # 驗證稽核帳本的雜湊鏈
+```
+
+`summarize` 子指令會呼叫 `api.notes.example`（測試用保留網域），只在端對端測試的隔離網路中可用。
+
+強制模式需要的機密真值由**執行 warp 的主機環境變數**提供（例如 `NOTES_API_KEY=... warp enforce ...`），
+真值不會進入殼內；殼內只有佔位值，由對外閘門在送往綁定主機時注入標頭。
+
+測試：`go test ./...`。`e2e/` 的端對端測試需要 root（用 veth 建立與網際網路隔離的測試網路），會實際執行
+[`examples/notes-app`](examples/notes-app/app.py)（正常應用）與 [`examples/evil-app`](examples/evil-app/app.py)
+（刻意做壞事的應用），並從殼外驗證每一項攻擊都被擋下。
+
+## 第 1 期實作狀態
+
+| 項目 | 狀態 |
+| --- | --- |
+| `warp lint`：封閉格式、全部硬性規則、軟性規則警告、證據檢核（側錄檔由核心簽章） | 已實作 |
+| `process` 隔離：使用者/掛載/網路/PID/IPC/UTS/cgroup 命名空間、合成檔案系統、移除全部 capabilities、no_new_privs | 已實作（Linux） |
+| 對外閘門：唯一出口為核心代理、主機+連接埠白名單、殼內無解析器、解析後檢查位址（防 DNS rebinding）、TLS SNI 比對 | 已實作 |
+| 機密代理：佔位值、對綁定主機中止 TLS（每次執行產生、受名稱限制的本機 CA）後注入標頭、回應中的真值遮蔽 | 已實作（HTTP/1.1；HTTPS 與明文 HTTP） |
+| 對內閘門：只在主機 127.0.0.1 以一次性權杖開放、檢查 Host 標頭 | 已實作（僅 HTTP） |
+| `record` / `enforce` / `probe`、雜湊串接的稽核帳本、`label`、`draft`、`diff`、`init` | 已實作 |
+| 資源上限：cgroup（v1/v2，可用時）＋ rlimit | 盡力而為 |
+| 限制可執行的程式（`spawn`） | 僅聲明，未強制（標籤如實標示） |
+| macOS、`container`／`microvm`／`wasm` 後端 | 未實作：宣告要求時拒絕執行 |
+| AI 閘門、資料閘門、`survey`、`seal`、例外的同意簽章 | 未實作（第 2 期） |
 
 ## 殼能保證與不能保證的事
 
@@ -78,4 +134,4 @@ flowchart LR
 
 ## 命名
 
-專案沿用儲存庫名稱 **SecureAIWarp**，文件中簡稱 **Warp** 或「殼」。指令列工具暫定為 `warp`。
+專案沿用儲存庫名稱 **SecureAIWarp**，文件中簡稱 **Warp** 或「殼」。指令列工具為 `warp`。
