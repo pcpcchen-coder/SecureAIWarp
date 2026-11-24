@@ -73,15 +73,15 @@ ai:
 data:
   classes:
     - id: financial.invoice
-      source: files[1]
+      source: "files[1]"
     - id: pii.contact
-      source: files[1]
+      source: "files[1]"
   flows:
     - class: financial.invoice
-      to: [network.egress[0]]
+      to: ["network.egress[0]"]
       purpose: 送交模型擷取欄位
     - class: pii.contact
-      to: [network.egress[0]]
+      to: ["network.egress[0]"]
       purpose: 發票上的聯絡資訊會隨內容送交模型
   retention:
     location: "${APP_DATA}"
@@ -99,19 +99,19 @@ supply_chain:
 exceptions: []                    # 沒有任何超出軟性規則的授權
 
 evidence:
-  - grant: files[0]
+  - grant: "files[0]"
     observed_in: .warp/evidence/trace-0001.json
     triggered_by: tests/test_settings.py::test_save_settings
-  - grant: files[1]
+  - grant: "files[1]"
     observed_in: .warp/evidence/trace-0003.json
     triggered_by: tests/test_ingest.py::test_read_folder
-  - grant: network.egress[0]
+  - grant: "network.egress[0]"
     observed_in: .warp/evidence/trace-0004.json
     triggered_by: tests/test_extract.py::test_extract_fields
-  - grant: network.egress[1]
+  - grant: "network.egress[1]"
     observed_in: .warp/evidence/trace-0007.json
     triggered_by: tests/test_fx.py::test_convert_usd
-  - grant: network.ingress[0]
+  - grant: "network.ingress[0]"
     observed_in: .warp/evidence/trace-0002.json
     triggered_by: tests/test_ui.py::test_home_page
 
