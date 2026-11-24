@@ -15,9 +15,17 @@ func TestRenderAlignmentAndFacts(t *testing.T) {
 		Files:   []manifest.FileGrant{{Path: "${USER_PICK:invoices}", Mode: "ro", Purpose: "讀取你選定的發票資料夾，這段用途文字刻意寫得很長很長很長很長很長很長以測試換行"}},
 		Network: manifest.Network{Egress: []manifest.Egress{{Host: "api.anthropic.com", Port: 443, Purpose: "分析發票內容"}}},
 		Secrets: []manifest.Secret{{Name: "ANTHROPIC_API_KEY", Visibility: "gate-only", Bind: manifest.SecretBind{Host: "api.anthropic.com"}}},
+		Evidence: []manifest.Evidence{
+			{Grant: "files[0]", ObservedIn: ".warp/evidence/trace-0001.json", TriggeredBy: "python3 app.py scan"},
+			{Grant: "secrets[0]", ObservedIn: ".warp/evidence/trace-0002.json", TriggeredBy: "python3 app.py scan"},
+			{Grant: "network.egress[0]", ObservedIn: ".warp/evidence/trace-0003.json", TriggeredBy: "python3 -c 'import urllib.request; urllib.request.urlopen(\"https://api.anthropic.com/v1/messages\")'"},
+		},
 	}
 	l := &manifest.Loaded{Manifest: m, SHA256: "x"}
 	lb := Build(l, &manifest.Result{Risk: manifest.Risk{Score: 18, Level: "低"}}, t.TempDir())
+	if len(lb.Evidence) != 2 || len(lb.Evidence[0].Grants) != 2 || len(lb.Evidence[0].Traces) != 2 {
+		t.Errorf("evidence sources must be grouped by command: %+v", lb.Evidence)
+	}
 	out := Render(lb)
 	w := -1
 	for _, line := range strings.Split(out, "\n") {
@@ -30,7 +38,8 @@ func TestRenderAlignmentAndFacts(t *testing.T) {
 			t.Errorf("misaligned line (%d vs %d): %q", width(line), w, line)
 		}
 	}
-	for _, want := range []string{"api.anthropic.com:443", "你選定的一個資料夾（invoices）", "看到金鑰的真值", "（無例外）", "未經驗證的自述", "L1 已包覆"} {
+	for _, want := range []string{"api.anthropic.com:443", "你選定的一個資料夾（invoices）", "看到金鑰的真值", "（無例外）", "未經驗證的自述", "L1 已包覆",
+		"授權依據", "$ python3 app.py scan", "→ 讀取你選定的一個資料夾（invoices）、使用 ANTHROPIC_API_KEY", "$ python3 -c 'import urllib.request;"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("label missing %q:\n%s", want, out)
 		}

@@ -16,7 +16,8 @@ func TestDraftFromTraces(t *testing.T) {
 	os.WriteFile(filepath.Join(root, "main.py"), []byte("x"), 0o644)
 	dir := filepath.Join(root, ".warp", "evidence")
 	os.MkdirAll(dir, 0o755)
-	tr := &evidence.Trace{Format: evidence.Format, ID: "trace-0001", Command: []string{"python3", "main.py"}, Events: []evidence.Event{
+	digest, _ := manifest.ComputeDigest(root)
+	tr := &evidence.Trace{Format: evidence.Format, ID: "trace-0001", Command: []string{"python3", "main.py"}, AppDigest: digest, Events: []evidence.Event{
 		{Channel: "file", Root: "${USER_PICK:in}", Path: "a", Op: "read"},
 		{Channel: "file", Root: "${APP_DATA}", Path: "o", Op: "write"},
 		{Channel: "egress", Host: "api.example.com", Port: 443, Decision: "allowed"},

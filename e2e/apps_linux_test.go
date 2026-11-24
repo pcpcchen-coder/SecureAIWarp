@@ -5,6 +5,7 @@ package e2e
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/pcpcchen-coder/SecureAIWarp/internal/evidence"
 	"io"
 	"net/http"
 	"os"
@@ -82,6 +83,15 @@ func testNotesAppLifecycle(t *testing.T, w *who) {
 	if r := runWarp(t, w, env, "lint", "-C", app); r.code != 0 {
 		t.Fatalf("lint failed after filling purposes")
 	}
+	// Evidence replay: every grant is reproduced by re-running the recorded
+	// commands (synthetic picks, decoy secret, declared egress only; the
+	// served UI is visited once).
+	r = runWarp(t, w, env, "evidence", "replay", "-C", app)
+	if r.code != 0 || strings.Contains(r.stdout, "未重現") {
+		t.Fatalf("evidence replay must reproduce every grant of a well-behaved app")
+	}
+	mustContain(t, "replay", r.stdout, "重放指令：python3 app.py summarize", "重放指令：python3 app.py serve --once",
+		"✔ 重現  files[0]", "✔ 重現  network.egress[0]", "✔ 重現  network.ingress[0]", "✔ 重現  secrets[0]")
 
 	// Enforce: missing real secret -> refuse (fail closed).
 	if r := runWarp(t, w, env, "enforce", "-C", app, "--pick", "notes="+real, "--", "python3", "app.py", "summarize"); r.code != 125 {
@@ -191,6 +201,7 @@ func testNotesAppLifecycle(t *testing.T, w *who) {
 
 	// Label: L2 after enforce + probe on the same manifest/digest.
 	r = runWarp(t, w, env, "label", "-C", app)
+	mustContain(t, "label", r.stdout, "$ python3 app.py summarize", "$ python3 app.py serve --once")
 	mustContain(t, "label", r.stdout, "L2 已驗證", "api.notes.example:443", "你選定的一個資料夾（notes）", "看到金鑰的真值", "（無例外）", "執行身分　"+wantIdentity)
 	if memScope != "shell" {
 		// A degraded limit must be visible on the label, not hidden.
@@ -416,5 +427,123 @@ func TestEvilAppControlWithoutShell(t *testing.T) {
 				t.Errorf("control: %s should succeed without the shell (fixtures not exploitable?)\n%s", name, out)
 			}
 		}
+	})
+}
+
+// TestEvidenceForgeryAndAbuse pins down what evidence does and does not
+// guarantee when the agent runs as the same OS user as the core:
+//
+//   - forging: an agent that reads the signing key can write a trace that
+//     passes lint (documented limitation), but evidence replay re-runs the
+//     claimed command and the claimed behaviour does not reappear;
+//   - abusing: an agent can run `warp record -- <any command>` and obtain
+//     a genuine trace; replay reproduces it, but the label shows the
+//     command that produced the evidence, so it is visible to the human.
+func TestEvidenceForgeryAndAbuse(t *testing.T) {
+	forEachIdentity(t, func(t *testing.T, w *who) {
+		base := newBase(t)
+		app := filepath.Join(base, "notes-app")
+		copyDir(t, filepath.Join(h.repo, "examples", "notes-app"), app)
+		synthetic := filepath.Join(base, "synthetic-notes")
+		writeFiles(t, synthetic, map[string]string{"a.txt": "synthetic\n"})
+		w.own(t, base)
+		env := warpEnv(w)
+		runWarp(t, w, env, "init", "-C", app)
+		if r := runWarp(t, w, env, "record", "-C", app, "--pick", "notes="+synthetic, "--secret", "NOTES_API_KEY", "--", "python3", "app.py", "summarize"); r.code != 0 {
+			t.Fatalf("record failed")
+		}
+		if r := runWarp(t, w, env, "draft", "-C", app); r.code != 0 {
+			t.Fatalf("draft failed")
+		}
+		mf := filepath.Join(app, ".warp", "warp.yaml")
+		clean := fillPurposes(t, mf)
+		if r := runWarp(t, w, env, "lint", "-C", app); r.code != 0 {
+			t.Fatalf("lint failed")
+		}
+		digest := strings.TrimSpace(runWarp(t, w, env, "digest", "-C", app).stdout)
+		addGrant := func(trace, trigger string) {
+			t.Helper()
+			s := strings.Replace(clean, "\nsecrets:\n", "\n    - host: evil.example\n      port: 443\n      purpose: 端對端測試用途\nsecrets:\n", 1)
+			s = strings.Replace(s, "\nevidence:\n", fmt.Sprintf("\nevidence:\n  - grant: network.egress[1]\n    observed_in: %s\n    triggered_by: %s\n", trace, trigger), 1)
+			if !strings.Contains(s, "host: evil.example") || !strings.Contains(s, "grant: network.egress[1]") {
+				t.Fatalf("unexpected draft layout:\n%s", clean)
+			}
+			os.WriteFile(mf, []byte(s), 0o644)
+		}
+
+		// 1. Forgery with the key the agent can read.
+		key, err := os.ReadFile(filepath.Join(w.state, "trace.key"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		forged := &evidence.Trace{Format: evidence.Format, ID: "trace-0009", CreatedAt: "2026-01-01T00:00:00Z",
+			Command: []string{"python3", "app.py", "summarize"}, AppDigest: digest,
+			Events: []evidence.Event{{Channel: evidence.ChanEgress, Host: "evil.example", Port: 443, Op: "connect", Decision: "allowed", Count: 1}}}
+		fp := filepath.Join(app, ".warp", "evidence", "trace-0009.json")
+		if err := evidence.Write(fp, forged, key); err != nil {
+			t.Fatal(err)
+		}
+		w.own(t, fp)
+		addGrant(".warp/evidence/trace-0009.json", "python3 app.py summarize")
+		if r := runWarp(t, w, env, "lint", "-C", app); r.code != 0 {
+			t.Fatalf("documented limitation changed: a same-user forgery with the key is expected to pass lint; update docs/05 §4 if this is now prevented")
+		}
+		logBefore := len(upstreamEntries(t))
+		r := runWarp(t, w, env, "evidence", "replay", "-C", app)
+		if r.code == 0 {
+			t.Fatalf("replay must expose the forged evidence")
+		}
+		mustContain(t, "replay forged", r.stdout, "【.warp/evidence/trace-0009.json】", "✖ 未重現 network.egress[1]：沒有觀察到連往 evil.example:443")
+		for _, e := range upstreamEntries(t)[logBefore:] {
+			if strings.HasPrefix(e.Host, "evil.example") {
+				t.Fatalf("replay must not have contacted evil.example (the real app never does)")
+			}
+		}
+		os.Remove(fp)
+
+		// 1b. A forged trace whose command contacts an undeclared host:
+		// replay only lets declared destinations through, so replaying
+		// someone else's evidence cannot be used to reach other hosts.
+		forged.Command = []string{"python3", "-c", "import urllib.request; urllib.request.urlopen('https://cdn.notes.example/ping').read()"}
+		if err := evidence.Write(fp, forged, key); err != nil {
+			t.Fatal(err)
+		}
+		w.own(t, fp)
+		q, _ := json.Marshal(evidence.CommandString(forged.Command))
+		addGrant(".warp/evidence/trace-0009.json", string(q))
+		logBefore = len(upstreamEntries(t))
+		if r := runWarp(t, w, env, "evidence", "replay", "-C", app); r.code == 0 || !strings.Contains(r.stdout, "✖ 未重現 network.egress[1]") {
+			t.Fatalf("replay must expose the forged evidence")
+		}
+		for _, e := range upstreamEntries(t)[logBefore:] {
+			if strings.HasPrefix(e.Host, "cdn.notes.example") || strings.HasPrefix(e.Host, "evil.example") {
+				t.Fatalf("replay reached an undeclared or unproven host: %+v", e)
+			}
+		}
+		os.Remove(fp)
+
+		// 2. Abuse: a genuine trace from an arbitrary command.
+		argv := []string{"python3", "-c", "import urllib.request; urllib.request.urlopen('https://evil.example/ping').read()"}
+		if r := runWarp(t, w, env, append([]string{"record", "-C", app, "--"}, argv...)...); r.code != 0 {
+			t.Fatalf("record of an arbitrary command failed")
+		}
+		cmd := evidence.CommandString(argv)
+		// The agent cannot describe the trace as coming from the app.
+		addGrant(".warp/evidence/trace-0002.json", "python3 app.py summarize")
+		if r := runWarp(t, w, env, "lint", "-C", app); r.code == 0 || !strings.Contains(r.stdout, "evidence-command") {
+			t.Fatalf("lint must reject a triggered_by that misdescribes the recorded command")
+		}
+		quoted, _ := json.Marshal(cmd) // a JSON string is a valid YAML double-quoted scalar
+		addGrant(".warp/evidence/trace-0002.json", string(quoted))
+		if r := runWarp(t, w, env, "lint", "-C", app); r.code != 0 {
+			t.Fatalf("lint failed for the abused (but genuine) evidence")
+		}
+		r = runWarp(t, w, env, "label", "-C", app)
+		mustContain(t, "label", r.stdout, "$ python3 -c 'import urllib.request;", "連線 evil.example:443")
+		r = runWarp(t, w, env, "evidence", "replay", "-C", app)
+		if r.code != 0 {
+			t.Fatalf("genuine evidence must replay")
+		}
+		mustContain(t, "replay abused", r.stdout, "重放指令："+cmd, "✔ 重現  network.egress[1]")
 	})
 }

@@ -62,9 +62,15 @@ type Options struct {
 	SecretNames  []string        // record only (in addition to manifest secrets)
 	// IngressNotify, if set, receives every host URL opened by the ingress gate.
 	IngressNotify func(innerPort int, url string)
-	Stdin         io.Reader
-	Stdout        io.Writer
-	Stderr        io.Writer
+	// Record only (evidence replay): write the trace into TraceDir instead
+	// of .warp/evidence, stop the shell after Timeout, and allow egress
+	// only to the manifest's declared destinations.
+	TraceDir     string
+	Timeout      time.Duration
+	DeclaredOnly bool
+	Stdin        io.Reader
+	Stdout       io.Writer
+	Stderr       io.Writer
 }
 
 // Result of a run.
@@ -97,19 +103,21 @@ type session struct {
 	secrets  []gate.SecretBinding
 	decoys   []gate.Decoy
 	rules    []gate.Rule
-	ca       *gate.CA
-	cfg      *sandbox.Config
-	cg       *sandbox.Cgroup
-	rec      *evidence.Recorder
-	shell    *sandbox.Shell
-	egress   *gate.Egress
-	ingress  []*gate.Ingress
-	watcher  *watch.Watcher
-	usage    *gate.Usage
-	digest   string
-	command  []string
-	cleanups []func()
-	extraBin bool
+	// recordOnly restricts record-mode egress (evidence replay).
+	recordOnly []gate.Rule
+	ca         *gate.CA
+	cfg        *sandbox.Config
+	cg         *sandbox.Cgroup
+	rec        *evidence.Recorder
+	shell      *sandbox.Shell
+	egress     *gate.Egress
+	ingress    []*gate.Ingress
+	watcher    *watch.Watcher
+	usage      *gate.Usage
+	digest     string
+	command    []string
+	cleanups   []func()
+	extraBin   bool
 
 	res        resources
 	resApplied []string
@@ -402,6 +410,15 @@ func (s *session) planSecrets() (map[string]string, error) {
 			v := "warp-decoy-" + strings.ToLower(n) + "-" + randHex(8)
 			s.decoys = append(s.decoys, gate.Decoy{Name: n, Value: v})
 			env[n] = v
+		}
+		if s.opt.DeclaredOnly {
+			if s.m == nil {
+				return nil, errors.New("重放需要宣告檔")
+			}
+			s.recordOnly = []gate.Rule{}
+			for i, e := range s.m.Network.Egress {
+				s.recordOnly = append(s.recordOnly, gate.Rule{Host: e.Host, Port: e.Port, LAN: bool(e.LAN), Grant: manifest.GrantRef(manifest.GrantEgress, i)})
+			}
 		}
 	case ModeEnforce, ModeProbe:
 		for _, sec := range s.m.Secrets {
@@ -753,7 +770,7 @@ func (s *session) start() error {
 		gmode = gate.ModeRecord
 	}
 	s.egress = gate.NewEgress(gate.EgressConfig{
-		Mode: gmode, Rules: s.rules, Secrets: s.secrets, Decoys: s.decoys, CA: s.ca,
+		Mode: gmode, Rules: s.rules, RecordOnly: s.recordOnly, Secrets: s.secrets, Decoys: s.decoys, CA: s.ca,
 		Resolver: resolver, Ledger: s.led, Recorder: s.rec, Usage: s.usage, Notify: s.notify,
 	})
 	s.shell, err = sandbox.Start(s.cfg, s.cg, sandbox.Stdio{Stdin: s.opt.Stdin, Stdout: s.opt.Stdout, Stderr: s.opt.Stderr})
@@ -853,7 +870,11 @@ func (s *session) finish() (*Result, error) {
 	}
 	if s.opt.Mode == ModeRecord {
 		s.rec.Add(evidence.Event{Channel: evidence.ChanProcess, Exe: strings.Join(s.command, " ")})
-		p, id, err := evidence.NextPath(filepath.Join(s.appRoot, ".warp", "evidence"))
+		dir := filepath.Join(s.appRoot, ".warp", "evidence")
+		if s.opt.TraceDir != "" {
+			dir = s.opt.TraceDir
+		}
+		p, id, err := evidence.NextPath(dir)
 		if err != nil {
 			return res, err
 		}
@@ -902,6 +923,13 @@ func Run(opt Options) (*Result, error) {
 	}
 	stop := s.forwardSignals()
 	defer stop()
+	if opt.Timeout > 0 {
+		timer := time.AfterFunc(opt.Timeout, func() {
+			s.errf("已達時間上限 %s，結束殼內程序", opt.Timeout)
+			s.shell.Kill()
+		})
+		defer timer.Stop()
+	}
 	res, err := s.finish()
 	if err == nil {
 		s.summary(res)

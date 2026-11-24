@@ -86,10 +86,14 @@ evidence:
     observed_in: .warp/evidence/trace-0007.json
     triggered_by: tests/test_fx.py::test_convert_usd
 ```
-`grant` 以路徑指向宣告中的某一條授權。檢查器會打開側錄檔確認真的有這筆行為。
+`grant` 以路徑指向宣告中的某一條授權。檢查器會打開側錄檔確認真的有這筆行為。上例的 `triggered_by` 是設計草案的寫法；
+第 1 期必須是側錄時實際執行的指令（例如 `pytest tests/test_fx.py::test_convert_usd`）。
 
 （第 1 期）`observed_in` 必須是 `.warp/evidence/` 下的相對路徑；側錄檔由核心寫入並以本機金鑰（HMAC-SHA256，存在核心狀態目錄）簽章，
-檢查器拒收簽章不符或被修改的側錄檔。比對規則：`files[i]` 需有該變數根目錄下的存取（`rw` 需有寫入）；`network.egress[i]` 需有連往該主機與連接埠的嘗試；
+檢查器拒收簽章不符或被修改的側錄檔。`triggered_by` 必須**逐字等於**側錄檔中核心實際執行的指令（`warp draft` 會自動填入；
+含空白等字元的參數以單引號表示），否則以 `evidence-command` 拒收；側錄檔記錄的應用內容雜湊必須等於 `app.digest`，否則以 `evidence-stale` 拒收。
+簽章與這些規則能擋住意外與其他使用者，擋不住與核心同一個使用者的 Agent；證據的實際意義見 [05](05-agent-fitting-protocol.md) 第 4.1 節，
+可用 `warp evidence replay` 重新執行確認。比對規則：`files[i]` 需有該變數根目錄下的存取（`rw` 需有寫入）；`network.egress[i]` 需有連往該主機與連接埠的嘗試；
 `network.ingress[i]` 需有監聽該埠；`secrets[i]` 見上。側錄檔是本機產物：換一台機器（換一把金鑰）就必須重新側錄。
 
 ## 3. 檢查規則

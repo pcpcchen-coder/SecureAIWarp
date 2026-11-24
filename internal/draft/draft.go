@@ -47,6 +47,10 @@ func FromDir(appRoot, dir string, key []byte) (*Draft, error) {
 	type secretKey struct{ name, host, header string }
 	secrets := map[secretKey]*seen{}
 	visibleOnly := map[string]string{}
+	digest, err := manifest.ComputeDigest(appRoot)
+	if err != nil {
+		return nil, err
+	}
 	var lastCmd []string
 	for _, p := range paths {
 		t, err := evidence.Load(p, key)
@@ -54,9 +58,13 @@ func FromDir(appRoot, dir string, key []byte) (*Draft, error) {
 			d.Notes = append(d.Notes, fmt.Sprintf("略過 %s：%v", filepath.Base(p), err))
 			continue
 		}
+		if t.AppDigest != digest {
+			d.Notes = append(d.Notes, fmt.Sprintf("略過 %s：側錄時的應用內容與目前不同，請重新側錄", filepath.Base(p)))
+			continue
+		}
 		rel, _ := filepath.Rel(appRoot, p)
 		rel = filepath.ToSlash(rel)
-		trig := strings.Join(t.Command, " ")
+		trig := evidence.CommandString(t.Command)
 		lastCmd = t.Command
 		for _, e := range t.Events {
 			switch e.Channel {
@@ -96,11 +104,7 @@ func FromDir(appRoot, dir string, key []byte) (*Draft, error) {
 		}
 	}
 	if lastCmd == nil {
-		return nil, fmt.Errorf("沒有任何有效的側錄紀錄")
-	}
-	digest, err := manifest.ComputeDigest(appRoot)
-	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("沒有任何有效的側錄紀錄：%s", strings.Join(d.Notes, "；"))
 	}
 	name := strings.ToLower(filepath.Base(appRoot))
 	name = strings.Map(func(r rune) rune {

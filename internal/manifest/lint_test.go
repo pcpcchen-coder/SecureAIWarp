@@ -19,7 +19,11 @@ func fixture(t *testing.T) string {
 	os.WriteFile(filepath.Join(root, "app.py"), []byte("print(1)\n"), 0o644)
 	dir := filepath.Join(root, ".warp", "evidence")
 	os.MkdirAll(dir, 0o755)
-	tr := &evidence.Trace{Format: evidence.Format, ID: "trace-0001", Command: []string{"python3", "app.py"}, Events: []evidence.Event{
+	digest, err := ComputeDigest(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := &evidence.Trace{Format: evidence.Format, ID: "trace-0001", Command: []string{"python3", "app.py"}, AppDigest: digest, Events: []evidence.Event{
 		{Channel: "file", Root: "${APP_DATA}", Path: "x", Op: "write"},
 		{Channel: "file", Root: "${USER_PICK:docs}", Path: "a", Op: "read"},
 		{Channel: "egress", Host: "api.example.com", Port: 443, Decision: "allowed"},
@@ -38,7 +42,7 @@ func base(t *testing.T, root string) *Manifest {
 		t.Fatal(err)
 	}
 	ev := func(g string) Evidence {
-		return Evidence{Grant: g, ObservedIn: ".warp/evidence/trace-0001.json", TriggeredBy: "pytest"}
+		return Evidence{Grant: g, ObservedIn: ".warp/evidence/trace-0001.json", TriggeredBy: "python3 app.py"}
 	}
 	return &Manifest{
 		Warp: "0.1",
@@ -146,7 +150,7 @@ func TestSoftRulesAndExceptions(t *testing.T) {
 	m.Network.Egress[0].Host = "*.example.com"
 	m.Secrets[0].Bind.Host = "api.example.com"
 	m.Network.Egress = append(m.Network.Egress, Egress{Host: "api.example.com", Port: 443, Purpose: "x"})
-	m.Evidence = append(m.Evidence, Evidence{Grant: "network.egress[1]", ObservedIn: ".warp/evidence/trace-0001.json", TriggeredBy: "t"})
+	m.Evidence = append(m.Evidence, Evidence{Grant: "network.egress[1]", ObservedIn: ".warp/evidence/trace-0001.json", TriggeredBy: "python3 app.py"})
 	r := lint(t, root, m)
 	if r.Errors() != 0 || !hasRule(r, LevelWarning, SoftEgressSubdomain) {
 		t.Fatalf("expected soft warning only, got %+v", r.Findings)
@@ -230,5 +234,29 @@ func TestParseSize(t *testing.T) {
 		if _, err := ParseSize(in); err == nil {
 			t.Errorf("%q should fail", in)
 		}
+	}
+}
+
+// TestEvidenceBinding: evidence is bound to the command the core actually
+// ran and to the app content it was recorded on. An agent cannot describe
+// a trace as coming from another command, nor reuse a trace recorded on
+// different app content (for example a throwaway app written to produce
+// the behaviour).
+func TestEvidenceBinding(t *testing.T) {
+	root := fixture(t)
+	if r := lint(t, root, base(t, root)); r.Errors() != 0 {
+		t.Fatalf("fixture must lint clean: %+v", r.Findings)
+	}
+	m := base(t, root)
+	m.Evidence[2].TriggeredBy = "pytest tests/test_api.py"
+	if r := lint(t, root, m); !hasRule(r, LevelError, "evidence-command") {
+		t.Fatalf("a triggered_by that differs from the trace's command must be rejected")
+	}
+	// A validly signed trace recorded on other content (here: before the
+	// app changed) no longer counts, even after app.digest is updated.
+	os.WriteFile(filepath.Join(root, "app.py"), []byte("print(2)\n"), 0o644)
+	m = base(t, root)
+	if r := lint(t, root, m); !hasRule(r, LevelError, "evidence-stale") {
+		t.Fatalf("a trace recorded on different app content must be rejected")
 	}
 }

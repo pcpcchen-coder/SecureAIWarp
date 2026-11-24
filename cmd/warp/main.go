@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/pcpcchen-coder/SecureAIWarp/internal/diff"
 	"github.com/pcpcchen-coder/SecureAIWarp/internal/draft"
@@ -66,6 +67,7 @@ const usage = `SecureAIWarp 核心 warp ` + Version + `
   label [-f 宣告] [--json]     由宣告產生權限標籤（終端機 + .warp/label.json）
   diff <舊宣告> <新宣告>       以人話列出兩版宣告的權限差異
   digest                       計算應用內容雜湊
+  evidence replay [選項]       在本機重新執行每份證據的側錄指令，確認宣告的行為確實重現
   ledger verify|show           驗證或列出稽核帳本
   survey                       （尚未實作）靜態盤點
   seal                         （尚未實作）封籤
@@ -143,6 +145,8 @@ func run(args []string) int {
 		return cmdDigest(rest)
 	case "ledger":
 		return cmdLedger(rest)
+	case "evidence":
+		return cmdEvidence(rest)
 	case "survey":
 		fmt.Fprintln(os.Stderr, "warp：survey（靜態盤點、相依與機密掃描）尚未實作，不在第 1 期範圍。請由 Agent 依 SKILL.md 手動盤點並寫入 .warp/survey.json。")
 		return exitUsage
@@ -446,15 +450,51 @@ func cmdDigest(args []string) int {
 	return exitOK
 }
 
+func cmdEvidence(args []string) int {
+	if len(args) == 0 || args[0] != "replay" {
+		fmt.Fprintln(os.Stderr, "用法：warp evidence replay [-C 目錄] [-f 宣告] [--pick 名稱=合成資料夾] [--timeout 60s]")
+		return exitUsage
+	}
+	c := newFlags("evidence replay")
+	var picks multiFlag
+	c.fs.Var(&picks, "pick", "重放時使用的合成資料夾：名稱=資料夾（預設為核心產生的合成資料）")
+	timeout := c.fs.Duration("timeout", 60*time.Second, "每個指令的時間上限")
+	if err := c.fs.Parse(args[1:]); err != nil {
+		return exitUsage
+	}
+	root, err := c.appRoot()
+	if err != nil {
+		return errorf("%v", err)
+	}
+	pm, err := parsePicks(picks)
+	if err != nil {
+		return errorf("%v", err)
+	}
+	fmt.Fprintln(os.Stderr, "warp：證據重放：以側錄模式重新執行每份證據記錄的指令（只用誘餌機密與合成資料，對外連線只允許宣告的目的地），")
+	fmt.Fprintln(os.Stderr, "      並檢查每條授權的行為是否再次出現。側錄檔中除了指令以外的內容都不採信。")
+	rep, err := runner.Replay(runner.ReplayOptions{AppRoot: root, ManifestPath: c.manifestPath(root), Picks: pm, Timeout: *timeout})
+	if err != nil {
+		return errorf("重放無法執行：%v", err)
+	}
+	runner.PrintReplay(os.Stdout, rep)
+	if !rep.AllReproduced() {
+		fmt.Println("有授權的行為沒有重現：它的證據不能在這台機器上被確認。請檢查上面列出的指令，或要求作者補充證據。")
+		return exitFail
+	}
+	fmt.Println("全部授權的行為都已由上面列出的指令重現。注意：這證明「這些指令會做出這些行為」，不證明這些指令就是應用的正常用法——請看指令本身。")
+	return exitOK
+}
+
 func cmdLedger(args []string) int {
 	if len(args) == 0 || (args[0] != "verify" && args[0] != "show") {
-		fmt.Fprintln(os.Stderr, "用法：warp ledger verify|show [-C 目錄] [--run 執行編號]")
+		fmt.Fprintln(os.Stderr, "用法：warp ledger verify|show [-C 目錄] [--run 執行編號] [--expect 筆數:雜湊]")
 		return exitUsage
 	}
 	sub := args[0]
 	c := newFlags("ledger")
 	runID := c.fs.String("run", "", "只顯示此執行編號")
 	onlyDeny := c.fs.Bool("denied", false, "只顯示被阻擋的項目")
+	expect := c.fs.String("expect", "", "verify：另外比對先前抄下的尾端值（格式：筆數:雜湊）")
 	if err := c.fs.Parse(args[1:]); err != nil {
 		return exitUsage
 	}
@@ -481,7 +521,22 @@ func cmdLedger(args []string) int {
 			fmt.Printf("✖ 帳本驗證失敗：%v\n", err)
 			return exitFail
 		}
-		fmt.Printf("✔ 帳本雜湊鏈完整：%d 筆（放行 %d、阻擋 %d）\n  %s\n", r.Entries, r.Allow, r.Deny, path)
+		if *expect != "" {
+			var seq uint64
+			var hash string
+			if n, _ := fmt.Sscanf(strings.Replace(*expect, ":", " ", 1), "%d %s", &seq, &hash); n != 2 {
+				fmt.Fprintln(os.Stderr, "warp：--expect 的格式為 筆數:雜湊")
+				return exitUsage
+			}
+			if got := r.HashAt(seq); got != hash {
+				fmt.Printf("✖ 帳本與先前抄下的尾端值不符：第 %d 筆的雜湊為 %q，預期 %s（帳本被截斷或改寫）\n", seq, got, hash)
+				return exitFail
+			}
+			fmt.Printf("✔ 第 %d 筆與先前抄下的尾端值一致\n", seq)
+		}
+		fmt.Printf("✔ 帳本雜湊鏈完整，尾端與錨點一致：%d 筆（放行 %d、阻擋 %d）\n  %s\n", r.Entries, r.Allow, r.Deny, path)
+		fmt.Printf("  尾端：第 %d 筆，雜湊 %s\n", r.Head.Seq, r.Head.Hash)
+		fmt.Println("  ※ 帳本沒有秘密金鑰：同一個作業系統使用者可以把帳本與錨點一起改寫。若要事後發現這種改寫，請把上面的尾端值抄到別處保存，日後比對同一筆的雜湊。")
 		return exitOK
 	}
 	entries, err := ledger.ReadAll(path)

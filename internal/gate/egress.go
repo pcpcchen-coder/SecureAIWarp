@@ -53,17 +53,21 @@ type Decoy struct {
 
 // EgressConfig configures the egress gate.
 type EgressConfig struct {
-	Mode     string
-	Rules    []Rule
-	Secrets  []SecretBinding // enforce: gate-only secrets to inject
-	Redact   []string        // real values that must never flow back into the shell
-	Decoys   []Decoy         // record: decoy values to look for
-	CA       *CA             // required if any connection must be inspected
-	Resolver *Resolver
-	Ledger   *ledger.Ledger
-	Recorder *evidence.Recorder
-	Usage    *Usage
-	Notify   func(string) // human-readable block notices
+	Mode  string
+	Rules []Rule // enforce: the only allowed destinations
+	// RecordOnly, in record mode, restricts connections to these
+	// destinations (evidence replay only re-checks declared behaviour and
+	// must not open the network to whatever the replayed command wants).
+	RecordOnly []Rule
+	Secrets    []SecretBinding // enforce: gate-only secrets to inject
+	Redact     []string        // real values that must never flow back into the shell
+	Decoys     []Decoy         // record: decoy values to look for
+	CA         *CA             // required if any connection must be inspected
+	Resolver   *Resolver
+	Ledger     *ledger.Ledger
+	Recorder   *evidence.Recorder
+	Usage      *Usage
+	Notify     func(string) // human-readable block notices
 	// DialTimeout for upstream connections.
 	DialTimeout time.Duration
 }
@@ -163,9 +167,13 @@ func (g *Egress) decide(ctx context.Context, host string, port int) decision {
 		return decision{reason: "無效的主機名稱"}
 	}
 	var rule *Rule
-	if g.cfg.Mode == ModeEnforce {
-		for i := range g.cfg.Rules {
-			r := &g.cfg.Rules[i]
+	rules, restricted := g.cfg.Rules, g.cfg.Mode == ModeEnforce
+	if g.cfg.Mode == ModeRecord && g.cfg.RecordOnly != nil {
+		rules, restricted = g.cfg.RecordOnly, true
+	}
+	if restricted {
+		for i := range rules {
+			r := &rules[i]
 			if r.Port == port && hostEqual(r.Host, host) {
 				rule = r
 				break

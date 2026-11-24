@@ -1,6 +1,14 @@
-// Package evidence defines record-mode traces. Traces are written only by
-// the core and signed (HMAC) with a per-user key kept outside every shell,
-// so an agent can cite a trace but cannot hand-write one without that key.
+// Package evidence defines record-mode traces. Traces are written by the
+// core and signed (HMAC) with a per-user key kept outside every shell.
+//
+// What the signature does and does not mean: it shows the file was written
+// with this OS user's key and not modified since, so the app inside the
+// shell, other OS users and accidental edits cannot produce or alter a
+// valid trace. It does NOT keep out a process running as the same OS user
+// (such as the fitting agent), which can read the key; and even an honest
+// trace only shows that some command, run under the core, exhibited the
+// behaviour. The command is therefore part of the evidence (shown on the
+// label), and `warp evidence replay` re-runs it instead of trusting files.
 package evidence
 
 import (
@@ -138,6 +146,20 @@ func Verify(t *Trace, key []byte) error {
 
 // Load reads and verifies a trace file.
 func Load(path string, key []byte) (*Trace, error) {
+	t, err := LoadUnverified(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := Verify(t, key); err != nil {
+		return nil, err
+	}
+	return t, nil
+}
+
+// LoadUnverified parses a trace without checking its signature. Only
+// evidence replay uses it: replay re-runs the trace's command under this
+// core and trusts nothing else in the file.
+func LoadUnverified(path string) (*Trace, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -150,9 +172,6 @@ func Load(path string, key []byte) (*Trace, error) {
 	}
 	if t.Format != Format {
 		return nil, fmt.Errorf("不支援的側錄檔版本 %q", t.Format)
-	}
-	if err := Verify(&t, key); err != nil {
-		return nil, err
 	}
 	return &t, nil
 }
@@ -212,6 +231,24 @@ func ListTraces(dir string) ([]string, error) {
 	}
 	sort.Strings(out)
 	return out, nil
+}
+
+// CommandString renders an argv for humans, quoting arguments so that the
+// rendering is unambiguous (`sh -c 'a; b'` is not shown as `sh -c a; b`).
+// It is what triggered_by must contain and what labels display.
+func CommandString(argv []string) string {
+	out := make([]string, len(argv))
+	for i, a := range argv {
+		if a != "" && strings.IndexFunc(a, func(r rune) bool {
+			return !(r == '-' || r == '_' || r == '.' || r == '/' || r == ':' || r == '=' || r == ',' || r == '+' || r == '@' || r == '%' ||
+				(r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9'))
+		}) < 0 {
+			out[i] = a
+			continue
+		}
+		out[i] = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
+	}
+	return strings.Join(out, " ")
 }
 
 // HostMatches reports whether host matches a manifest host pattern. A

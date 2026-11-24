@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 )
 
 // Root returns the core state root.
@@ -54,6 +55,23 @@ func AppDir(appRoot, name string) (string, error) {
 	return dir, nil
 }
 
+// checkPrivate refuses a key file that someone other than its owner could
+// read or replace. The key only keeps other OS users (and the app inside
+// the shell, which never sees the state directory) from forging traces;
+// it cannot keep out a process running as the same user.
+func checkPrivate(p string, st os.FileInfo) error {
+	if !st.Mode().IsRegular() {
+		return fmt.Errorf("側錄簽章金鑰 %s 不是一般檔案（可能是符號連結），拒絕使用", p)
+	}
+	if st.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("側錄簽章金鑰 %s 的權限為 %v，其他使用者可讀寫；拒絕使用（請改為 0600 或刪除後重新產生，舊的側錄檔需重新側錄）", p, st.Mode().Perm())
+	}
+	if sys, ok := st.Sys().(*syscall.Stat_t); ok && int(sys.Uid) != os.Geteuid() {
+		return fmt.Errorf("側錄簽章金鑰 %s 不屬於目前的使用者（uid %d），拒絕使用", p, sys.Uid)
+	}
+	return nil
+}
+
 // TraceKey returns the per-user key used to sign traces, creating it once.
 func TraceKey() ([]byte, error) {
 	root, err := Root()
@@ -64,7 +82,14 @@ func TraceKey() ([]byte, error) {
 		return nil, err
 	}
 	p := filepath.Join(root, "trace.key")
-	if b, err := os.ReadFile(p); err == nil {
+	if st, err := os.Lstat(p); err == nil {
+		if err := checkPrivate(p, st); err != nil {
+			return nil, err
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return nil, err
+		}
 		if len(b) != 32 {
 			return nil, fmt.Errorf("側錄簽章金鑰 %s 已損毀", p)
 		}

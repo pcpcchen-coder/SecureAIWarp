@@ -567,7 +567,16 @@ func (l *linter) checkEvidence() {
 				l.errf("grant-evidence", g, "證據 %s 無效：%v", ev.ObservedIn, err)
 				continue
 			}
-			if why := l.matches(g, t); why != "" {
+			// The trace, not the agent, says which command produced the
+			// behaviour: triggered_by must be a verbatim copy of it.
+			if cmd := evidence.CommandString(t.Command); ev.TriggeredBy != cmd {
+				l.errf("evidence-command", g, "證據 %s 的 triggered_by %q 與側錄檔中核心實際執行的指令不符（實際為 %q）；triggered_by 只能照抄核心記錄的指令", ev.ObservedIn, ev.TriggeredBy, cmd)
+			}
+			// Evidence only counts for the app content it was recorded on.
+			if t.AppDigest != l.m.App.Digest {
+				l.errf("evidence-stale", g, "證據 %s 側錄時的應用內容雜湊（%s）與宣告的 app.digest 不同；應用內容變動後必須重新側錄", ev.ObservedIn, orNone(t.AppDigest))
+			}
+			if why := EvidenceMatches(l.m, g, t); why != "" {
 				l.errf("grant-evidence", g, "證據 %s 中沒有對應行為：%s", ev.ObservedIn, why)
 			}
 		}
@@ -596,11 +605,20 @@ func (l *linter) loadTrace(rel string, cache map[string]*evidence.Trace) (*evide
 	return t, err
 }
 
-func (l *linter) matches(g string, t *evidence.Trace) string {
+func orNone(s string) string {
+	if s == "" {
+		return "（無）"
+	}
+	return s
+}
+
+// EvidenceMatches reports why trace t does not show the behaviour of grant
+// g of manifest m ("" if it does). Lint and evidence replay share it.
+func EvidenceMatches(m *Manifest, g string, t *evidence.Trace) string {
 	kind, idx, _ := ParseGrant(g)
 	switch kind {
 	case GrantFile:
-		f := l.m.Files[idx]
+		f := m.Files[idx]
 		needWrite := f.Mode == "rw"
 		if !t.HasFile(f.Path, needWrite) {
 			if needWrite && t.HasFile(f.Path, false) {
@@ -609,17 +627,17 @@ func (l *linter) matches(g string, t *evidence.Trace) string {
 			return fmt.Sprintf("沒有觀察到對 %s 的存取", f.Path)
 		}
 	case GrantEgress:
-		e := l.m.Network.Egress[idx]
+		e := m.Network.Egress[idx]
 		if !t.HasEgress(e.Host, e.Port) {
 			return fmt.Sprintf("沒有觀察到連往 %s:%d", e.Host, e.Port)
 		}
 	case GrantIngress:
-		in := l.m.Network.Ingress[idx]
+		in := m.Network.Ingress[idx]
 		if !t.HasIngress(in.Listen) {
 			return fmt.Sprintf("沒有觀察到監聽 %d", in.Listen)
 		}
 	case GrantSecret:
-		s := l.m.Secrets[idx]
+		s := m.Secrets[idx]
 		if !t.HasSecret(s.Name, s.Bind.Host, s.Bind.Inject.Header) {
 			return fmt.Sprintf("沒有觀察到 %s 經由標頭 %s 送往 %s", s.Name, s.Bind.Inject.Header, s.Bind.Host)
 		}

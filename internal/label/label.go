@@ -49,6 +49,15 @@ type Verification struct {
 	Resources   []report.ResourceLimit `json:"resources,omitempty"`
 }
 
+// EvidenceSource is one command whose recorded run justifies grants. The
+// command is the one the core executed in record mode (lint requires
+// triggered_by to be a verbatim copy of the trace's command).
+type EvidenceSource struct {
+	Command string   `json:"command"`
+	Traces  []string `json:"traces"`
+	Grants  []string `json:"grants"`
+}
+
 // Label is the machine-readable label (label.json).
 type Label struct {
 	LabelVersion   string               `json:"label_version"`
@@ -63,6 +72,7 @@ type Label struct {
 	Verification   Verification         `json:"verification"`
 	TrustLevel     string               `json:"trust_level"`
 	DeniedByDesign []manifest.Denied    `json:"denied_by_design,omitempty"`
+	Evidence       []EvidenceSource     `json:"evidence"`
 	Notes          []string             `json:"notes"`
 }
 
@@ -79,7 +89,8 @@ func Build(l *manifest.Loaded, res *manifest.Result, appRoot string) *Label {
 	if lb.Attention == nil {
 		lb.Attention = []manifest.Attention{}
 	}
-	for _, f := range m.Files {
+	grantText := map[string]string{}
+	for i, f := range m.Files {
 		kind, pick, _ := manifest.PathVar(f.Path)
 		verb := "讀取"
 		if f.Mode == "rw" {
@@ -95,9 +106,10 @@ func Build(l *manifest.Loaded, res *manifest.Result, appRoot string) *Label {
 			obj = fmt.Sprintf("你選定的一個資料夾（%s）", pick)
 		}
 		lb.Can = append(lb.Can, Line{"files", "📁", verb, obj, f.Purpose})
+		grantText[manifest.GrantRef(manifest.GrantFile, i)] = verb + obj
 	}
 	lan := false
-	for _, e := range m.Network.Egress {
+	for i, e := range m.Network.Egress {
 		obj := fmt.Sprintf("%s:%d", e.Host, e.Port)
 		if e.LAN {
 			obj += "（內部網路）"
@@ -107,21 +119,45 @@ func Build(l *manifest.Loaded, res *manifest.Result, appRoot string) *Label {
 			obj += "，每日上傳 ≤ " + e.Limits.UploadPerDay
 		}
 		lb.Can = append(lb.Can, Line{"egress", "🌐", "連線", obj, e.Purpose})
+		grantText[manifest.GrantRef(manifest.GrantEgress, i)] = fmt.Sprintf("連線 %s:%d", e.Host, e.Port)
 	}
 	visible := false
-	for _, s := range m.Secrets {
+	for i, s := range m.Secrets {
 		obj := fmt.Sprintf("%s，只會送往 %s（工具本身看不到金鑰）", s.Name, s.Bind.Host)
 		if s.Visibility == "app-visible" {
 			obj = fmt.Sprintf("%s（工具可直接看到金鑰）", s.Name)
 			visible = true
 		}
 		lb.Can = append(lb.Can, Line{"secrets", "🔑", "使用", obj, s.Purpose})
+		grantText[manifest.GrantRef(manifest.GrantSecret, i)] = "使用 " + s.Name
 	}
 	if m.AI != nil && m.AI.Budget != nil {
 		lb.Can = append(lb.Can, Line{"ai", "🤖", "AI", fmt.Sprintf("每日上限 %g 美元（僅聲明，尚未強制）", m.AI.Budget.DailyUSD), ""})
 	}
-	for _, in := range m.Network.Ingress {
+	for i, in := range m.Network.Ingress {
 		lb.Can = append(lb.Can, Line{"ingress", "🚪", "開放", fmt.Sprintf("%d 埠，僅本機，需一次性權杖", in.Listen), in.Purpose})
+		grantText[manifest.GrantRef(manifest.GrantIngress, i)] = fmt.Sprintf("開放 %d 埠", in.Listen)
+	}
+	// Which commands justify which grants.
+	lb.Evidence = []EvidenceSource{}
+	idx := map[string]int{}
+	for _, ev := range m.Evidence {
+		if !m.GrantExists(ev.Grant) {
+			continue
+		}
+		i, ok := idx[ev.TriggeredBy]
+		if !ok {
+			i = len(lb.Evidence)
+			idx[ev.TriggeredBy] = i
+			lb.Evidence = append(lb.Evidence, EvidenceSource{Command: ev.TriggeredBy})
+		}
+		src := &lb.Evidence[i]
+		if !contains(src.Traces, ev.ObservedIn) {
+			src.Traces = append(src.Traces, ev.ObservedIn)
+		}
+		if t := orRaw(grantText, ev.Grant); !contains(src.Grants, t) {
+			src.Grants = append(src.Grants, t)
+		}
 	}
 	if m.Runtime.Spawn == "any" {
 		lb.Can = append(lb.Can, Line{"process", "⚙", "執行", "任意指令", ""})
@@ -190,6 +226,7 @@ func Build(l *manifest.Loaded, res *manifest.Result, appRoot string) *Label {
 		"風險分數只用於比較與排序，不是絕對的安全評級。",
 		"用途文字由作者或其 Agent 撰寫，未經驗證；主機、路徑、額度等事實欄位由核心從宣告產生並強制執行。",
 		"殼限制的是爆炸半徑，不保證工具在允許範圍內的行為正確。",
+		"授權依據是側錄時核心實際執行的指令；它只證明「這個指令做出了這個行為」，不證明這是應用的正常用法。側錄檔與報告都是本機檔案，同一個作業系統使用者（包括安裝 Agent）可以偽造；要確認請自己執行 warp evidence replay 與 warp probe。",
 	}
 	return lb
 }
@@ -276,6 +313,15 @@ func Render(lb *Label) string {
 		row(fmt.Sprintf("  ⚠ %s（%s）", a.Text, st))
 	}
 	hr("├", "┤")
+	row("授權依據（側錄時核心實際執行的指令）")
+	if len(lb.Evidence) == 0 {
+		row("  （無）")
+	}
+	for _, e := range lb.Evidence {
+		row("  $ " + e.Command)
+		row("    → " + strings.Join(e.Grants, "、"))
+	}
+	hr("├", "┤")
 	var cov []string
 	for _, c := range lb.Coverage {
 		cov = append(cov, c.Name+levelIcon[c.Level])
@@ -318,6 +364,15 @@ func Render(lb *Label) string {
 		b.WriteString("  ※ " + n + "\n")
 	}
 	return b.String()
+}
+
+func contains(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
 }
 
 func orRaw(m map[string]string, k string) string {

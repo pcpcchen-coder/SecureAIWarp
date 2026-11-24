@@ -46,3 +46,18 @@ func TestHostMatches(t *testing.T) {
 		}
 	}
 }
+
+func TestCommandString(t *testing.T) {
+	for _, c := range []struct {
+		in   []string
+		want string
+	}{
+		{[]string{"python3", "app.py", "--once"}, "python3 app.py --once"},
+		{[]string{"sh", "-c", "a; curl x"}, "sh -c 'a; curl x'"},
+		{[]string{"echo", "it's", ""}, `echo 'it'\''s' ''`},
+	} {
+		if got := CommandString(c.in); got != c.want {
+			t.Errorf("%q: got %s, want %s", c.in, got, c.want)
+		}
+	}
+}
