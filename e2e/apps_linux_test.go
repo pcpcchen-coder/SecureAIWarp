@@ -4,38 +4,44 @@ package e2e
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
 // TestNotesAppLifecycle walks the full fitting protocol on a well-behaved
 // app: record -> draft -> lint -> enforce (functions still work) -> probe
 // (every boundary holds) -> label (L2) -> ledger verify.
-func TestNotesAppLifecycle(t *testing.T) {
-	need(t)
-	base := t.TempDir()
+func TestNotesAppLifecycle(t *testing.T) { forEachIdentity(t, testNotesAppLifecycle) }
+
+func testNotesAppLifecycle(t *testing.T, w *who) {
+	base := newBase(t)
 	app := filepath.Join(base, "notes-app")
 	copyDir(t, filepath.Join(h.repo, "examples", "notes-app"), app)
 	synthetic := filepath.Join(base, "synthetic-notes")
 	writeFiles(t, synthetic, map[string]string{"a.txt": "synthetic one\n", "b.txt": "synthetic two\n"})
 	real := filepath.Join(base, "real-notes")
 	writeFiles(t, real, map[string]string{"meeting.txt": "real meeting notes\n", "todo.txt": "real todo\n"})
-	env := warpEnv()
+	w.own(t, base)
+	env := warpEnv(w)
+	logStart := len(upstreamEntries(t))
 
-	if r := runWarp(t, env, "init", "-C", app); r.code != 0 {
+	if r := runWarp(t, w, env, "init", "-C", app); r.code != 0 {
 		t.Fatalf("init failed")
 	}
 	// Record: the decoy key reaches the API; the real key is never used.
-	r := runWarp(t, env, "record", "-C", app, "--pick", "notes="+synthetic, "--secret", "NOTES_API_KEY", "--", "python3", "app.py", "summarize")
+	r := runWarp(t, w, env, "record", "-C", app, "--pick", "notes="+synthetic, "--secret", "NOTES_API_KEY", "--", "python3", "app.py", "summarize")
 	if r.code != 0 || !strings.Contains(r.stdout, "summary ok") {
 		t.Fatalf("record summarize failed")
 	}
 	// Record the web UI: operate it through the printed loopback URL.
-	r = runWarpServing(t, env, func(u string) {
+	r = runWarpServing(t, w, env, func(u string) {
 		resp, err := httpClient().Get(u)
 		if err != nil {
 			t.Errorf("GET ingress during record: %v", err)
@@ -50,7 +56,7 @@ func TestNotesAppLifecycle(t *testing.T) {
 	if r.code != 0 {
 		t.Fatalf("record serve failed")
 	}
-	for _, e := range upstreamEntries(t) {
+	for _, e := range upstreamEntries(t)[logStart:] {
 		for _, v := range e.Headers["X-Api-Key"] {
 			if v == realKey {
 				t.Fatalf("record mode sent the real key upstream")
@@ -59,7 +65,7 @@ func TestNotesAppLifecycle(t *testing.T) {
 	}
 
 	// Draft and fill in purposes, as the Fitter would.
-	if r := runWarp(t, env, "draft", "-C", app); r.code != 0 {
+	if r := runWarp(t, w, env, "draft", "-C", app); r.code != 0 {
 		t.Fatalf("draft failed")
 	}
 	mf := filepath.Join(app, ".warp", "warp.yaml")
@@ -69,21 +75,22 @@ func TestNotesAppLifecycle(t *testing.T) {
 	if strings.Contains(string(drafted), "${APP_CACHE}") {
 		t.Errorf("draft granted APP_CACHE although the app never used it")
 	}
-	if r := runWarp(t, env, "lint", "-C", app); r.code == 0 {
+	if r := runWarp(t, w, env, "lint", "-C", app); r.code == 0 {
 		t.Fatalf("lint must reject placeholder purposes")
 	}
 	fillPurposes(t, mf)
-	if r := runWarp(t, env, "lint", "-C", app); r.code != 0 {
+	if r := runWarp(t, w, env, "lint", "-C", app); r.code != 0 {
 		t.Fatalf("lint failed after filling purposes")
 	}
 
 	// Enforce: missing real secret -> refuse (fail closed).
-	if r := runWarp(t, env, "enforce", "-C", app, "--pick", "notes="+real, "--", "python3", "app.py", "summarize"); r.code != 125 {
+	if r := runWarp(t, w, env, "enforce", "-C", app, "--pick", "notes="+real, "--", "python3", "app.py", "summarize"); r.code != 125 {
 		t.Fatalf("enforce without the real secret must refuse, got %d", r.code)
 	}
 	// Enforce with the real key on the host side.
-	envKey := warpEnv("NOTES_API_KEY=" + realKey)
-	r = runWarp(t, envKey, "enforce", "-C", app, "--pick", "notes="+real, "--", "python3", "app.py", "summarize")
+	envKey := warpEnv(w, "NOTES_API_KEY="+realKey)
+	logEnforce := len(upstreamEntries(t))
+	r = runWarp(t, w, envKey, "enforce", "-C", app, "--pick", "notes="+real, "--", "python3", "app.py", "summarize")
 	if r.code != 0 || !strings.Contains(r.stdout, "summary ok: 2 notes") {
 		t.Fatalf("declared behaviour must work under enforce")
 	}
@@ -91,7 +98,7 @@ func TestNotesAppLifecycle(t *testing.T) {
 		t.Fatalf("real key leaked into app output")
 	}
 	injected := false
-	for _, e := range upstreamEntries(t) {
+	for _, e := range upstreamEntries(t)[logEnforce:] {
 		if e.Path == "/v1/summarize" && len(e.Headers["X-Api-Key"]) == 1 && e.Headers["X-Api-Key"][0] == realKey {
 			injected = true
 			if e.Host != "api.notes.example" || !e.TLS {
@@ -102,13 +109,16 @@ func TestNotesAppLifecycle(t *testing.T) {
 	if !injected {
 		t.Fatalf("gate did not inject the real key over TLS")
 	}
-	summaries, _ := filepath.Glob(filepath.Join(h.state, "apps", "notes-app-*", "data", "summary.json"))
-	if len(summaries) != 1 {
-		t.Fatalf("APP_DATA should persist in the core state dir, got %v", summaries)
+	summary := filepath.Join(appStateDir(t, w, app), "data", "summary.json")
+	if _, err := os.Stat(summary); err != nil {
+		t.Fatalf("APP_DATA should persist in the core state dir: %v", err)
 	}
+	// The files the shell wrote on the host belong to the identity warp
+	// ran as: proof that the unprivileged runs really were unprivileged.
+	w.mustOwn(t, summary, ledgerPath(t, w, app), filepath.Join(app, ".warp", "evidence", "trace-0001.json"))
 
 	// Ingress: only loopback + token.
-	r = runWarpServing(t, envKey, func(u string) {
+	r = runWarpServing(t, w, envKey, func(u string) {
 		noTok := strings.SplitN(u, "?", 2)[0]
 		resp, err := http.Get(noTok)
 		if err != nil {
@@ -135,11 +145,15 @@ func TestNotesAppLifecycle(t *testing.T) {
 	}
 
 	// Probe: every implemented probe must be blocked.
-	r = runWarp(t, env, "probe", "-C", app)
+	r = runWarp(t, w, env, "probe", "-C", app)
 	if r.code != 0 || !strings.Contains(r.stdout, "全部已實作的探針都被擋下") || strings.Contains(r.stdout, "穿透") {
 		t.Fatalf("probe did not block everything")
 	}
 	var rep struct {
+		Identity  string `json:"identity"`
+		Resources []struct {
+			Resource, Scope, Mechanism string
+		} `json:"resources"`
 		Items []struct{ ID, Status string } `json:"items"`
 	}
 	b, _ := os.ReadFile(filepath.Join(app, ".warp", "reports", "probe.json"))
@@ -155,14 +169,39 @@ func TestNotesAppLifecycle(t *testing.T) {
 			t.Errorf("probe %s: status %q", id, ids[id])
 		}
 	}
+	wantIdentity := "root"
+	if !w.root() {
+		wantIdentity = fmt.Sprintf("uid=%d", w.uid)
+	}
+	if rep.Identity != wantIdentity {
+		t.Errorf("probe report identity %q, want %q", rep.Identity, wantIdentity)
+	}
+	memScope := ""
+	for _, rl := range rep.Resources {
+		if rl.Resource == "memory" {
+			memScope = rl.Scope
+			if !w.root() && rl.Scope == "shell" && !strings.Contains(rl.Mechanism, "cgroup") {
+				t.Errorf("non-root memory limit claims shell scope without a cgroup: %+v", rl)
+			}
+		}
+	}
+	if memScope == "" {
+		t.Errorf("probe report does not say how the memory limit was enforced: %+v", rep.Resources)
+	}
 
 	// Label: L2 after enforce + probe on the same manifest/digest.
-	r = runWarp(t, env, "label", "-C", app)
-	mustContain(t, "label", r.stdout, "L2 已驗證", "api.notes.example:443", "你選定的一個資料夾（notes）", "看到金鑰的真值", "（無例外）")
+	r = runWarp(t, w, env, "label", "-C", app)
+	mustContain(t, "label", r.stdout, "L2 已驗證", "api.notes.example:443", "你選定的一個資料夾（notes）", "看到金鑰的真值", "（無例外）", "執行身分　"+wantIdentity)
+	if memScope != "shell" {
+		// A degraded limit must be visible on the label, not hidden.
+		mustContain(t, "label", r.stdout, "⚠ 記憶體上限在此機器上只限單一程序")
+	} else if strings.Contains(r.stdout, "⚠ 記憶體上限") {
+		t.Errorf("label warns about a memory limit that held for the whole shell")
+	}
 	if _, err := os.Stat(filepath.Join(app, ".warp", "label.json")); err != nil {
 		t.Errorf("label.json missing")
 	}
-	if r := runWarp(t, env, "ledger", "verify", "-C", app); r.code != 0 {
+	if r := runWarp(t, w, env, "ledger", "verify", "-C", app); r.code != 0 {
 		t.Fatalf("ledger verify failed")
 	}
 
@@ -170,12 +209,13 @@ func TestNotesAppLifecycle(t *testing.T) {
 	wider := filepath.Join(base, "wider.yaml")
 	s := strings.Replace(string(mustRead(t, mf)), "network:\n  egress:\n", "network:\n  egress:\n    - host: api.stripe.com\n      port: 443\n      purpose: 建立付款連結\n", 1)
 	os.WriteFile(wider, []byte(s), 0o644)
-	r = runWarp(t, env, "diff", mf, wider)
+	w.own(t, wider)
+	r = runWarp(t, w, env, "diff", mf, wider)
 	mustContain(t, "diff", r.stdout, "＋ 新增對外連線：api.stripe.com:443（用途：建立付款連結）", "風險等級")
 
 	// Tampering with the app invalidates the manifest (content digest).
 	os.WriteFile(filepath.Join(app, "app.py"), append(mustRead(t, filepath.Join(app, "app.py")), []byte("\n# changed\n")...), 0o644)
-	if r := runWarp(t, envKey, "enforce", "-C", app, "--pick", "notes="+real, "--", "python3", "app.py", "summarize"); r.code != 125 || !strings.Contains(r.stderr, "app-digest") {
+	if r := runWarp(t, w, envKey, "enforce", "-C", app, "--pick", "notes="+real, "--", "python3", "app.py", "summarize"); r.code != 125 || !strings.Contains(r.stderr, "app-digest") {
 		t.Fatalf("enforce must refuse a modified app")
 	}
 }
@@ -194,20 +234,22 @@ func mustRead(t *testing.T, p string) []byte {
 // mode under enforce. Every attack must fail, which is verified both from
 // the app's own report and from outside (host files, upstream server log,
 // host loopback service, ledger).
-func TestEvilAppIsContained(t *testing.T) {
-	need(t)
-	base := t.TempDir()
+func TestEvilAppIsContained(t *testing.T) { forEachIdentity(t, testEvilAppIsContained) }
+
+func testEvilAppIsContained(t *testing.T, w *who) {
+	base := newBase(t)
 	app := filepath.Join(base, "evil-app")
 	copyDir(t, filepath.Join(h.repo, "examples", "evil-app"), app)
 	notes := filepath.Join(base, "notes")
 	writeFiles(t, notes, map[string]string{"salary.txt": "CONFIDENTIAL salary list\n"})
-	env := warpEnv()
-	runWarp(t, env, "init", "-C", app)
-	r := runWarp(t, env, "record", "-C", app, "--pick", "notes="+notes, "--secret", "NOTES_API_KEY", "--", "python3", "app.py", "summarize")
+	w.own(t, base)
+	env := warpEnv(w)
+	runWarp(t, w, env, "init", "-C", app)
+	r := runWarp(t, w, env, "record", "-C", app, "--pick", "notes="+notes, "--secret", "NOTES_API_KEY", "--", "python3", "app.py", "summarize")
 	if r.code != 0 {
 		t.Fatalf("record failed")
 	}
-	if r := runWarp(t, env, "draft", "-C", app); r.code != 0 {
+	if r := runWarp(t, w, env, "draft", "-C", app); r.code != 0 {
 		t.Fatalf("draft failed")
 	}
 	mf := filepath.Join(app, ".warp", "warp.yaml")
@@ -222,7 +264,7 @@ func TestEvilAppIsContained(t *testing.T) {
 	s = strings.Replace(s, "\nsecrets:\n", "\n    - host: status.notes.example\n      port: 443\n      purpose: 服務狀態檢查\nsecrets:\n", 1)
 	s = strings.Replace(s, "\nevidence:\n", "\nevidence:\n  - grant: network.egress[2]\n    observed_in: .warp/evidence/trace-0001.json\n    triggered_by: python3 app.py summarize\n", 1)
 	os.WriteFile(mf, []byte(s), 0o644)
-	if r := runWarp(t, env, "lint", "-C", app); r.code != 0 {
+	if r := runWarp(t, w, env, "lint", "-C", app); r.code != 0 {
 		t.Fatalf("lint failed for evil manifest:\n%s", s)
 	}
 
@@ -234,9 +276,14 @@ func TestEvilAppIsContained(t *testing.T) {
 	decoy := filepath.Join(fakeHome, ".ssh", "id_rsa")
 	os.MkdirAll(filepath.Dir(decoy), 0o700)
 	os.WriteFile(decoy, []byte("-----BEGIN OPENSSH PRIVATE KEY-----\nwarp-e2e-decoy\n"), 0o600)
+	// For the unprivileged identity, every target belongs to the uid warp
+	// runs as: without the shell, each attack would succeed.
+	w.own(t, base)
+	w.mustOwn(t, victimDir, victim, fakeHome, filepath.Dir(decoy), decoy, app, notes)
 	logBefore := len(upstreamEntries(t))
+	loopBefore := h.loopHits.Load()
 
-	r = runWarp(t, warpEnv("NOTES_API_KEY="+realKey), "enforce", "-C", app, "--pick", "notes="+notes, "--",
+	r = runWarp(t, w, warpEnv(w, "NOTES_API_KEY="+realKey), "enforce", "-C", app, "--pick", "notes="+notes, "--",
 		"python3", "app.py", "attack", "--decoy", decoy, "--host-home", fakeHome, "--victim", victim,
 		"--victim-dir", victimDir, "--host-service", h.loopURL, "--host-marker", h.loopMarker, "--upstream-ip", upstreamIP)
 	if r.code != 0 {
@@ -284,7 +331,7 @@ func TestEvilAppIsContained(t *testing.T) {
 			t.Errorf("unexpected upstream request: %+v", e)
 		}
 	}
-	if n := h.loopHits.Load(); n != 0 {
+	if n := h.loopHits.Load() - loopBefore; n != 0 {
 		t.Errorf("host loopback service was reached %d times", n)
 	}
 	// Outside view: files.
@@ -303,7 +350,7 @@ func TestEvilAppIsContained(t *testing.T) {
 	// Ledger: every network attempt is recorded as denied.
 	denied := map[string]bool{}
 	redacted := false
-	for _, e := range ledgerEntries(t, "evil-app") {
+	for _, e := range ledgerEntries(t, w, app) {
 		if e["decision"] == "deny" {
 			denied[e["target"].(string)] = true
 			if e["channel"] == "secret" && e["action"] == "redact" {
@@ -320,7 +367,54 @@ func TestEvilAppIsContained(t *testing.T) {
 	if !redacted {
 		t.Errorf("ledger should record the redaction of the reflected key")
 	}
-	if r := runWarp(t, env, "ledger", "verify", "-C", app); r.code != 0 {
+	if r := runWarp(t, w, env, "ledger", "verify", "-C", app); r.code != 0 {
 		t.Errorf("ledger verify failed")
 	}
+}
+
+// TestEvilAppControlWithoutShell is the negative control for the
+// unprivileged runs: the same fixtures, owned the same way, are exploitable
+// when the app runs as that uid without warp. It shows that in
+// TestEvilAppIsContained/user the shell, not file permissions, is what
+// blocks the attacks.
+func TestEvilAppControlWithoutShell(t *testing.T) {
+	forEachIdentity(t, func(t *testing.T, w *who) {
+		if w.root() {
+			t.Skip("the control is only meaningful for the unprivileged identity")
+		}
+		base := newBase(t)
+		app := filepath.Join(base, "evil-app")
+		copyDir(t, filepath.Join(h.repo, "examples", "evil-app"), app)
+		victimDir := filepath.Join(base, "victim")
+		writeFiles(t, victimDir, map[string]string{"victim.txt": "important document\n"})
+		victim := filepath.Join(victimDir, "victim.txt")
+		fakeHome := filepath.Join(base, "home")
+		decoy := filepath.Join(fakeHome, ".ssh", "id_rsa")
+		os.MkdirAll(filepath.Dir(decoy), 0o700)
+		os.WriteFile(decoy, []byte("-----BEGIN OPENSSH PRIVATE KEY-----\nwarp-e2e-decoy\n"), 0o600)
+		w.own(t, base)
+		w.mustOwn(t, victimDir, victim, fakeHome, filepath.Dir(decoy), decoy, app)
+		cmd := exec.Command("python3", "app.py", "attack", "--decoy", decoy, "--host-home", fakeHome, "--victim", victim,
+			"--victim-dir", victimDir, "--host-service", h.loopURL, "--host-marker", h.loopMarker, "--upstream-ip", upstreamIP)
+		cmd.Dir = app
+		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + w.home, "APP_DATA=" + base}
+		cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uint32(w.uid), Gid: uint32(w.gid), Groups: []uint32{}}}
+		out, _ := cmd.Output()
+		got := map[string]bool{}
+		for _, line := range strings.Split(string(out), "\n") {
+			var a struct {
+				Attack    string `json:"attack"`
+				Succeeded bool   `json:"succeeded"`
+			}
+			if json.Unmarshal([]byte(line), &a) == nil && a.Attack != "" {
+				got[a.Attack] = a.Succeeded
+			}
+		}
+		for _, name := range []string{"read_decoy_credential", "read_host_home_ssh", "list_host_dir", "write_outside",
+			"delete_outside", "host_loopback_service"} {
+			if !got[name] {
+				t.Errorf("control: %s should succeed without the shell (fixtures not exploitable?)\n%s", name, out)
+			}
+		}
+	})
 }

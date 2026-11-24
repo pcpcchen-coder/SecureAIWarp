@@ -42,6 +42,11 @@ type Verification struct {
 	EnforceCurrent bool   `json:"enforce_current"`
 	EnforceExit    int    `json:"enforce_exit_code"`
 	EnforceCommand string `json:"enforce_command,omitempty"`
+	// RunIdentity and Resources describe the most recent current probe (or
+	// enforce) run: which OS identity the core ran as and how each resource
+	// limit was actually enforced on this machine.
+	RunIdentity string                 `json:"run_identity,omitempty"`
+	Resources   []report.ResourceLimit `json:"resources,omitempty"`
 }
 
 // Label is the machine-readable label (label.json).
@@ -133,7 +138,7 @@ func Build(l *manifest.Loaded, res *manifest.Result, appRoot string) *Label {
 
 	cov := func(ch, name, level, note string) { lb.Coverage = append(lb.Coverage, Coverage{ch, name, level, note}) }
 	cov("files", "檔案", "enforced", "合成檔案系統；只有宣告的路徑存在")
-	cov("process", "程序", "declared", "可執行的程式不受限制（spawn 僅聲明）；資源上限盡力而為")
+	cov("process", "程序", "declared", "")
 	cov("egress", "對外", "enforced", "唯一出口是核心代理；主機與連接埠白名單；解析後檢查位址")
 	cov("ingress", "對內", "enforced", "只在主機 127.0.0.1 以權杖開放")
 	if visible {
@@ -158,11 +163,20 @@ func Build(l *manifest.Loaded, res *manifest.Result, appRoot string) *Label {
 	if p := report.LoadProbe(appRoot); p != nil && p.ManifestSHA256 == l.SHA256 && p.AppDigest == digest {
 		v.ProbeCurrent = true
 		v.ProbeBlocked, v.ProbeTotal, v.ProbeNotImpl = p.Counts()
+		v.RunIdentity, v.Resources = p.Identity, p.Resources
 	}
 	if e := report.LoadEnforce(appRoot); e != nil && e.ManifestSHA256 == l.SHA256 && e.AppDigest == digest {
 		v.EnforceCurrent = true
 		v.EnforceExit = e.ExitCode
 		v.EnforceCommand = strings.Join(e.Command, " ")
+		if v.Resources == nil {
+			v.RunIdentity, v.Resources = e.Identity, e.Resources
+		}
+	}
+	for i := range lb.Coverage {
+		if lb.Coverage[i].Channel == "process" {
+			lb.Coverage[i].Note = "可執行的程式不受限制（spawn 僅聲明）；" + resourceNote(v.Resources)
+		}
 	}
 	switch {
 	case v.LintErrors > 0:
@@ -178,6 +192,34 @@ func Build(l *manifest.Loaded, res *manifest.Result, appRoot string) *Label {
 		"殼限制的是爆炸半徑，不保證工具在允許範圍內的行為正確。",
 	}
 	return lb
+}
+
+var resourceNames = map[string]string{"memory": "記憶體", "pids": "程序數", "disk": "磁碟", "cpu": "CPU"}
+var scopeNames = map[string]string{report.ScopeShell: "整個殼", report.ScopeProcess: "只限單一程序，殼的總量未受限",
+	report.ScopeFile: "只限單一檔案，總量未受限", report.ScopeNone: "未強制"}
+
+// resourceNote states how each resource limit actually held in the last
+// current run. Without such a run nothing is claimed.
+func resourceNote(rs []report.ResourceLimit) string {
+	if len(rs) == 0 {
+		return "資源上限尚未在此機器上以此版宣告執行過，實際效果未知"
+	}
+	var parts []string
+	for _, r := range rs {
+		parts = append(parts, fmt.Sprintf("%s %s %s（%s）", orRaw(resourceNames, r.Resource), r.Limit, orRaw(scopeNames, r.Scope), r.Mechanism))
+	}
+	return "資源上限：" + strings.Join(parts, "、")
+}
+
+// DegradedResources lists memory/pids limits that did not bound the whole shell.
+func DegradedResources(rs []report.ResourceLimit) []report.ResourceLimit {
+	var out []report.ResourceLimit
+	for _, r := range rs {
+		if (r.Resource == "memory" || r.Resource == "pids") && r.Scope != report.ScopeShell {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 var levelIcon = map[string]string{"enforced": "🟢", "monitored": "🟡", "declared": "🟠", "none": "⚪", "unused": "－"}
@@ -260,7 +302,13 @@ func Render(lb *Label) string {
 			enf = fmt.Sprintf("強制模式執行失敗（結束碼 %d）", v.EnforceExit)
 		}
 	}
+	for _, r := range DegradedResources(v.Resources) {
+		row(fmt.Sprintf("　　⚠ %s上限在此機器上%s（%s）", orRaw(resourceNames, r.Resource), orRaw(scopeNames, r.Scope), r.Mechanism))
+	}
 	row("驗證　　　" + probe + "｜" + enf)
+	if v.RunIdentity != "" {
+		row("執行身分　" + v.RunIdentity)
+	}
 	row("信任等級　" + orRaw(trustNames, lb.TrustLevel))
 	if lb.App.AuthorNote != "" {
 		row("作者說明　「" + lb.App.AuthorNote + "」← 未經驗證的自述")

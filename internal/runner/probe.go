@@ -164,7 +164,8 @@ func Probe(opt Options) (*report.Probe, error) {
 	if ferr != nil {
 		return nil, ferr
 	}
-	rep := &report.Probe{Core: CoreVersion, ManifestSHA256: s.loaded.SHA256, AppDigest: s.digest, RunID: s.runID}
+	rep := &report.Probe{Core: CoreVersion, ManifestSHA256: s.loaded.SHA256, AppDigest: s.digest, RunID: s.runID,
+		Identity: report.CurrentIdentity(), Resources: s.resLimits}
 	rb, err := os.ReadFile(filepath.Join(dataHost, ".probe-results.json"))
 	var items []report.ProbeItem
 	if err != nil || json.Unmarshal(rb, &items) != nil {
@@ -199,6 +200,23 @@ func Probe(opt Options) (*report.Probe, error) {
 		if !denied[tgt] {
 			items[i].Status = report.Error
 			items[i].Detail += "；但帳本中沒有對應的阻擋紀錄（" + tgt + "）"
+		}
+	}
+	// A resource probe only shows what it tested: with a per-process limit a
+	// single process is stopped, but the shell as a whole is not bounded.
+	for i, it := range items {
+		for _, rl := range s.resLimits {
+			if it.ID != "res."+rl.Resource {
+				continue
+			}
+			switch rl.Scope {
+			case report.ScopeProcess:
+				items[i].Name += "（僅測單一程序）"
+				items[i].Detail += "；注意：此上限以 " + rl.Mechanism + " 對每個程序個別套用，整個殼的總量未受限"
+			case report.ScopeFile:
+				items[i].Name += "（僅測單一檔案）"
+				items[i].Detail += "；注意：此上限以 " + rl.Mechanism + " 對單一檔案套用，總寫入量未受限"
+			}
 		}
 	}
 	// Host-side file checks.

@@ -5,6 +5,7 @@ package report
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -18,6 +19,31 @@ const (
 	NotImplemented = "not-implemented"
 )
 
+// Resource limit scopes: how much of the shell a limit actually bounds.
+const (
+	ScopeShell   = "shell"   // the whole shell together (cgroup, or a per-namespace count)
+	ScopeProcess = "process" // each process separately (rlimit); the shell total is not bounded
+	ScopeFile    = "file"    // each file separately
+	ScopeNone    = "none"    // not enforced
+)
+
+// ResourceLimit records how one declared resource limit was enforced in a
+// run, so the label can report what actually held on this machine.
+type ResourceLimit struct {
+	Resource  string `json:"resource"` // memory|pids|disk|cpu
+	Limit     string `json:"limit"`
+	Scope     string `json:"scope"`
+	Mechanism string `json:"mechanism"`
+}
+
+// CurrentIdentity describes the OS identity the core runs as.
+func CurrentIdentity() string {
+	if os.Geteuid() == 0 {
+		return "root"
+	}
+	return fmt.Sprintf("uid=%d", os.Geteuid())
+}
+
 // ProbeItem is the outcome of one deterministic probe.
 type ProbeItem struct {
 	ID       string `json:"id"`
@@ -29,12 +55,14 @@ type ProbeItem struct {
 
 // Probe is the full probe report.
 type Probe struct {
-	Time           string      `json:"time"`
-	Core           string      `json:"core"`
-	ManifestSHA256 string      `json:"manifest_sha256"`
-	AppDigest      string      `json:"app_digest"`
-	RunID          string      `json:"run_id"`
-	Items          []ProbeItem `json:"items"`
+	Time           string          `json:"time"`
+	Core           string          `json:"core"`
+	ManifestSHA256 string          `json:"manifest_sha256"`
+	AppDigest      string          `json:"app_digest"`
+	RunID          string          `json:"run_id"`
+	Identity       string          `json:"identity,omitempty"`
+	Resources      []ResourceLimit `json:"resources,omitempty"`
+	Items          []ProbeItem     `json:"items"`
 }
 
 // Counts returns blocked, total implemented and not-implemented counts.
@@ -61,12 +89,14 @@ func (p *Probe) AllBlocked() bool {
 
 // Enforce is written after every enforce run.
 type Enforce struct {
-	Time           string   `json:"time"`
-	ManifestSHA256 string   `json:"manifest_sha256"`
-	AppDigest      string   `json:"app_digest"`
-	Command        []string `json:"command"`
-	ExitCode       int      `json:"exit_code"`
-	Denied         int      `json:"denied"`
+	Time           string          `json:"time"`
+	ManifestSHA256 string          `json:"manifest_sha256"`
+	AppDigest      string          `json:"app_digest"`
+	Command        []string        `json:"command"`
+	ExitCode       int             `json:"exit_code"`
+	Denied         int             `json:"denied"`
+	Identity       string          `json:"identity,omitempty"`
+	Resources      []ResourceLimit `json:"resources,omitempty"`
 }
 
 // Dir returns the reports directory of an app.

@@ -43,6 +43,9 @@ func main() {
 		case sandbox.InitArg:
 			sandbox.RunInit()
 			return
+		case sandbox.ExecArg:
+			sandbox.RunExec(os.Args[2:])
+			return
 		case probe.AgentArg, probe.NestedArg, probe.SleepArg, probe.MemArg:
 			os.Exit(probe.RunHidden(os.Args[1], os.Args[2:]))
 		}

@@ -4,7 +4,9 @@
 // well-behaved app must keep working inside the shell, and a deliberately
 // malicious app must have every harmful action blocked. The tests need root
 // (to build an isolated veth test network); they never touch the real
-// Internet.
+// Internet. Every app test runs twice: once with warp running as root and
+// once with warp running as an ordinary, unprivileged user (root only
+// builds the test network and the fixtures, then drops to that uid).
 package e2e
 
 import (
@@ -13,9 +15,11 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -43,11 +47,12 @@ const (
 )
 
 var h struct {
-	repo, dir, warp, state, hosts, ca, upLog string
-	server                                   *exec.Cmd
-	loopURL, loopMarker                      string
-	loopHits                                 atomic.Int64
-	setupErr                                 error
+	repo, dir, warp, hosts, ca, upLog string
+	idents                            []*who
+	server                            *exec.Cmd
+	loopURL, loopMarker               string
+	loopHits                          atomic.Int64
+	setupErr                          error
 }
 
 func TestMain(m *testing.M) {
@@ -97,7 +102,14 @@ func setup() error {
 	if out, err := build.CombinedOutput(); err != nil {
 		return fmt.Errorf("build warp: %v\n%s", err, out)
 	}
-	h.state = filepath.Join(h.dir, "state")
+	// The binary and the shared fixtures must be usable by the
+	// unprivileged identity.
+	if err := os.Chmod(h.dir, 0o755); err != nil {
+		return err
+	}
+	if h.idents, err = makeIdentities(); err != nil {
+		return err
+	}
 	h.upLog = filepath.Join(h.dir, "upstream.log")
 	certFile, keyFile, err := makeCerts()
 	if err != nil {
@@ -285,18 +297,135 @@ type result struct {
 	code           int
 }
 
-func warpEnv(extra ...string) []string {
+// who is the OS identity warp runs as in one subtest.
+type who struct {
+	name     string
+	uid, gid int
+	state    string // WARP_STATE_DIR
+	home     string // HOME
+}
+
+func (w *who) root() bool { return w.uid == 0 }
+
+// defaultUnprivUID is the uid used for the unprivileged runs. It needs no
+// passwd entry: warp maps exactly this uid into its user namespace.
+const defaultUnprivUID = 47613
+
+func makeIdentities() ([]*who, error) {
+	want := os.Getenv("WARP_E2E_IDENTITIES")
+	if want == "" {
+		want = "root,user"
+	}
+	uid := defaultUnprivUID
+	if v := os.Getenv("WARP_E2E_UID"); v != "" {
+		fmt.Sscan(v, &uid)
+	}
+	var out []*who
+	for _, n := range strings.Split(want, ",") {
+		w := &who{name: n}
+		switch n {
+		case "root":
+		case "user":
+			w.uid, w.gid = uid, uid
+		default:
+			return nil, fmt.Errorf("unknown identity %q in WARP_E2E_IDENTITIES", n)
+		}
+		w.state = filepath.Join(h.dir, "state-"+n)
+		w.home = filepath.Join(h.dir, "home-"+n)
+		for _, d := range []string{w.state, w.home} {
+			if err := os.MkdirAll(d, 0o700); err != nil {
+				return nil, err
+			}
+			if err := os.Chown(d, w.uid, w.gid); err != nil {
+				return nil, err
+			}
+		}
+		out = append(out, w)
+	}
+	return out, nil
+}
+
+// forEachIdentity runs fn once per configured identity.
+func forEachIdentity(t *testing.T, fn func(t *testing.T, w *who)) {
+	need(t)
+	for _, w := range h.idents {
+		w := w
+		t.Run(w.name, func(t *testing.T) { fn(t, w) })
+	}
+}
+
+// newBase returns an empty directory for one test case under the shared,
+// traversable test directory.
+func newBase(t *testing.T) string {
+	t.Helper()
+	d, err := os.MkdirTemp(h.dir, "case-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Chmod(d, 0o755)
+	if os.Getenv("WARP_E2E_KEEP") == "" {
+		t.Cleanup(func() { os.RemoveAll(d) })
+	}
+	return d
+}
+
+// own hands every file under the given paths to w, so that for the
+// unprivileged identity only the shell (not file permissions) stands
+// between the app and those files.
+func (w *who) own(t *testing.T, paths ...string) {
+	t.Helper()
+	for _, p := range paths {
+		err := filepath.Walk(p, func(q string, _ os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			return os.Lchown(q, w.uid, w.gid)
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// mustOwn asserts that every path is owned by w and accessible to its owner.
+func (w *who) mustOwn(t *testing.T, paths ...string) {
+	t.Helper()
+	for _, p := range paths {
+		st, err := os.Lstat(p)
+		if err != nil {
+			t.Fatalf("%s: %v", p, err)
+		}
+		sys := st.Sys().(*syscall.Stat_t)
+		if int(sys.Uid) != w.uid {
+			t.Fatalf("%s is owned by uid %d, want %d", p, sys.Uid, w.uid)
+		}
+		if st.Mode().Perm()&0o600 != 0o600 {
+			t.Fatalf("%s is not readable and writable by its owner (%v)", p, st.Mode())
+		}
+	}
+}
+
+func warpEnv(w *who, extra ...string) []string {
 	env := []string{
-		"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"),
-		"WARP_STATE_DIR=" + h.state, "WARP_HOSTS_FILE=" + h.hosts, "SSL_CERT_FILE=" + h.ca,
+		"PATH=" + os.Getenv("PATH"), "HOME=" + w.home,
+		"WARP_STATE_DIR=" + w.state, "WARP_HOSTS_FILE=" + h.hosts, "SSL_CERT_FILE=" + h.ca,
 	}
 	return append(env, extra...)
 }
 
-func runWarp(t *testing.T, env []string, args ...string) result {
-	t.Helper()
+func (w *who) command(env []string, args ...string) *exec.Cmd {
 	cmd := exec.Command(h.warp, args...)
 	cmd.Env = env
+	cmd.Dir = w.home
+	if !w.root() {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uint32(w.uid), Gid: uint32(w.gid), Groups: []uint32{}}}
+	}
+	return cmd
+}
+
+func runWarp(t *testing.T, w *who, env []string, args ...string) result {
+	t.Helper()
+	cmd := w.command(env, args...)
 	var so, se bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &so, &se
 	err := cmd.Run()
@@ -314,10 +443,9 @@ var urlRe = regexp.MustCompile(`http://127\.0\.0\.1:\d+/\?warp_token=[0-9a-f]+`)
 
 // runWarpServing starts warp, waits for the ingress URL on stderr, calls fn
 // with it and then waits for warp to exit.
-func runWarpServing(t *testing.T, env []string, fn func(url string), args ...string) result {
+func runWarpServing(t *testing.T, w *who, env []string, fn func(url string), args ...string) result {
 	t.Helper()
-	cmd := exec.Command(h.warp, args...)
-	cmd.Env = env
+	cmd := w.command(env, args...)
 	var so bytes.Buffer
 	cmd.Stdout = &so
 	pr, pw := io.Pipe()
@@ -423,13 +551,30 @@ func mustContain(t *testing.T, what, s string, subs ...string) {
 	}
 }
 
-func ledgerEntries(t *testing.T, appName string) []map[string]any {
+// appStateDir is the core's per-app state directory (see internal/state):
+// keyed by the app name and the canonical app root.
+func appStateDir(t *testing.T, w *who, app string) string {
 	t.Helper()
-	matches, _ := filepath.Glob(filepath.Join(h.state, "apps", appName+"-*", "ledger.jsonl"))
-	if len(matches) != 1 {
-		t.Fatalf("expected one ledger for %s, got %v", appName, matches)
+	root, err := filepath.EvalSymlinks(app)
+	if err != nil {
+		t.Fatal(err)
 	}
-	b, _ := os.ReadFile(matches[0])
+	sum := sha256.Sum256([]byte(root))
+	return filepath.Join(w.state, "apps", filepath.Base(app)+"-"+hex.EncodeToString(sum[:6]))
+}
+
+func ledgerPath(t *testing.T, w *who, app string) string {
+	t.Helper()
+	p := filepath.Join(appStateDir(t, w, app), "ledger.jsonl")
+	if _, err := os.Stat(p); err != nil {
+		t.Fatalf("ledger for %s: %v", app, err)
+	}
+	return p
+}
+
+func ledgerEntries(t *testing.T, w *who, app string) []map[string]any {
+	t.Helper()
+	b, _ := os.ReadFile(ledgerPath(t, w, app))
 	var out []map[string]any
 	for _, line := range bytes.Split(b, []byte("\n")) {
 		if len(line) == 0 {

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/pcpcchen-coder/SecureAIWarp/internal/manifest"
+	"github.com/pcpcchen-coder/SecureAIWarp/internal/report"
 )
 
 func TestRenderAlignmentAndFacts(t *testing.T) {
@@ -37,6 +38,50 @@ func TestRenderAlignmentAndFacts(t *testing.T) {
 	for _, c := range lb.Cannot {
 		if strings.Contains(c, "執行其他程式") {
 			t.Errorf("label must not claim spawn is blocked (not enforced): %q", c)
+		}
+	}
+}
+
+// TestResourceCoverageIsHonest: the label states how each resource limit
+// actually held in the last current run, warns when a memory or process
+// limit did not bound the whole shell, and claims nothing without a run.
+func TestResourceCoverageIsHonest(t *testing.T) {
+	m := &manifest.Manifest{App: manifest.App{Name: "demo", Version: "1"}, Runtime: manifest.Runtime{Isolation: "process", Spawn: "none"}}
+	l := &manifest.Loaded{Manifest: m, SHA256: "x"}
+	dir := t.TempDir()
+	note := func(lb *Label) string {
+		for _, c := range lb.Coverage {
+			if c.Channel == "process" {
+				return c.Note
+			}
+		}
+		return ""
+	}
+	lb := Build(l, &manifest.Result{}, dir)
+	if n := note(lb); !strings.Contains(n, "實際效果未知") {
+		t.Errorf("without a run the label must not claim any limit: %q", n)
+	}
+	digest, _ := manifest.ComputeDigest(dir)
+	for _, c := range []struct {
+		scope string
+		warn  bool
+	}{{report.ScopeProcess, true}, {report.ScopeNone, true}, {report.ScopeShell, false}} {
+		p := &report.Probe{ManifestSHA256: "x", AppDigest: digest, Identity: "uid=1000", Items: []report.ProbeItem{{ID: "a", Status: report.Blocked}},
+			Resources: []report.ResourceLimit{{Resource: "memory", Limit: "512Mi", Scope: c.scope, Mechanism: "M"},
+				{Resource: "pids", Limit: "64", Scope: report.ScopeShell, Mechanism: "P"}}}
+		if err := report.WriteProbe(dir, p); err != nil {
+			t.Fatal(err)
+		}
+		lb := Build(l, &manifest.Result{}, dir)
+		out := Render(lb)
+		if got := strings.Contains(out, "⚠ 記憶體上限在此機器上"); got != c.warn {
+			t.Errorf("scope %s: warning shown=%v, want %v\n%s", c.scope, got, c.warn, out)
+		}
+		if strings.Contains(out, "⚠ 程序數上限") {
+			t.Errorf("pids held for the whole shell; no warning expected")
+		}
+		if !strings.Contains(note(lb), scopeNames[c.scope]) || !strings.Contains(out, "執行身分　uid=1000") {
+			t.Errorf("scope %s: coverage note %q", c.scope, note(lb))
 		}
 	}
 }

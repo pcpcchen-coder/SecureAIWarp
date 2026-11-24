@@ -163,7 +163,9 @@ flowchart LR
 
 ### 6.1 殼的建立
 1. 核心以 `/proc/self/exe __shell-init` 重新執行自己，同時建立新的使用者、掛載、網路、PID、IPC、UTS、cgroup 命名空間；
-   殼內 UID 0 對應到執行 warp 的使用者（只對應這一個 UID）。不依賴 bubblewrap 等外部工具。
+   殼內 UID 0 對應到執行 warp 的使用者（只對應這一個 UID、這一個 GID，並停用 `setgroups`）。不依賴 bubblewrap 等外部工具，
+   也不需要 setuid 輔助程式：整個流程只用一般使用者可建立的使用者命名空間，以一般使用者或 root 執行都走同一條路徑
+   （兩種身分都由端對端測試實際執行，見 [09](09-roadmap.md) 第 5 節）。
 2. 殼內的 init（PID 1）在一個新的 tmpfs 上組出合成根目錄，然後 `pivot_root` 並卸除舊根：
 
    | 殼內路徑 | 來源 | 權限 |
@@ -180,8 +182,20 @@ flowchart LR
    即使殼內再建立巢狀命名空間也無法改回可寫（探針 `fs.nested-userns` 驗證）；init 另把殼內的 `max_user_namespaces` 設為 0。
 3. 啟動應用前，init 在專用執行緒上清空 capability 邊界集、環境與繼承集，設定 `no_new_privs`，並以新的 session 啟動應用
    （沒有控制終端，無法以 TIOCSTI 注入按鍵）。init 自身設為不可 dump，應用無法 ptrace 它或讀它的環境。
+   應用經由一個短暫的 exec 輔助程序（同一個 warp 執行檔，於 `pivot_root` 前以檔案描述元保留、close-on-exec）啟動：
+   它先對自己套用 rlimit，再 `execve` 成應用。rlimit 因此只作用在應用上，不會套在 init 自己身上。
 4. 資源上限：可用時建立 cgroup（v2 或 v1 的 pids、memory），否則退回 rlimit；`RLIMIT_FSIZE` 與 `/tmp` 容量限制磁碟。
-   注意：以 root 執行且無法建立 pids cgroup 時，核心不套用 `RLIMIT_NPROC`，此時會印出警告。
+   各項上限**實際**以什麼機制、涵蓋多大範圍套用，會寫進強制與探測報告，並顯示在標籤上：
+
+   | 資源 | 有 cgroup | 沒有 cgroup（例如一般使用者、未委派 cgroup v2） |
+   | --- | --- | --- |
+   | 記憶體 | 整個殼 | `RLIMIT_DATA`，**只限單一程序**；殼的總量未受限（約為程序數 × 上限，另加 `/tmp`、`/dev/shm`）。核心印出警告，標籤以 ⚠ 標示 |
+   | 程序數 | 整個殼 | 一般使用者：`RLIMIT_NPROC`，在使用者命名空間內計數（Linux ≥ 5.14），等於限制整個殼的程序與執行緒；root：核心不對主機 root 套用 `RLIMIT_NPROC`，此項**未強制**並警告 |
+   | 磁碟 | 單一檔案大小（`RLIMIT_FSIZE`）＋ `/tmp` 容量；寫入宣告目錄的總量未受限 | 同左 |
+   | CPU | 未實作 | 未實作 |
+
+   記憶體退回時用 `RLIMIT_DATA` 而不是 `RLIMIT_AS`：Go、Node.js、JVM 等執行環境會預留遠大於實際用量的位址空間，
+   在小的 `RLIMIT_AS` 下根本無法啟動。
 5. 主程式結束時 init（PID 1）結束，核心會終止殼內所有程序，因此無法背景常駐。父程序消失時殼也會被終止（fail-closed）。
 
 ### 6.2 對外閘門的接法

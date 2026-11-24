@@ -113,6 +113,7 @@ type session struct {
 
 	res        resources
 	resApplied []string
+	resLimits  []report.ResourceLimit
 	planned    bool
 	secretEnv  map[string]string
 
@@ -552,18 +553,41 @@ func (s *session) buildConfig(secretEnv map[string]string) error {
 	}
 	applied := append([]string{}, s.cg.Applied...)
 	applied = append(applied, fmt.Sprintf("單檔大小 %s（RLIMIT_FSIZE）", human(res.disk)), fmt.Sprintf("/tmp 容量 %s", human(res.disk)))
-	if !s.cg.Has("pids") {
+	var lims []report.ResourceLimit
+	if s.cg.Has("memory") {
+		lims = append(lims, report.ResourceLimit{Resource: "memory", Limit: human(res.mem), Scope: report.ScopeShell, Mechanism: s.cg.Mechanism("memory")})
+	} else {
+		// RLIMIT_DATA (private writable mappings) rather than RLIMIT_AS:
+		// runtimes such as Go, Node.js and the JVM reserve far more address
+		// space than they use and refuse to start under a small RLIMIT_AS.
+		// It is a per-process limit, not a shell-wide one.
+		rl = append(rl, sandbox.Rlimit{Resource: unix.RLIMIT_DATA, Cur: uint64(res.mem), Max: uint64(res.mem)})
+		applied = append(applied, fmt.Sprintf("每個程序的資料記憶體 %s（RLIMIT_DATA）", human(res.mem)))
+		lims = append(lims, report.ResourceLimit{Resource: "memory", Limit: human(res.mem), Scope: report.ScopeProcess, Mechanism: "RLIMIT_DATA"})
+		s.errf("警告：無法建立 memory cgroup（%s）；記憶體上限改為對「每個程序」個別限制 %s（RLIMIT_DATA），整個殼的總用量並未受限（最多約為程序數 × 上限，另加 /tmp 與 /dev/shm 的記憶體檔案系統）。標籤會如實標示。", cgroupHint(), human(res.mem))
+	}
+	if s.cg.Has("pids") {
+		lims = append(lims, report.ResourceLimit{Resource: "pids", Limit: fmt.Sprint(res.pids), Scope: report.ScopeShell, Mechanism: s.cg.Mechanism("pids")})
+	} else {
 		rl = append(rl, sandbox.Rlimit{Resource: rlimitNproc, Cur: uint64(res.pids), Max: uint64(res.pids)})
 		if os.Getuid() == 0 {
+			// The kernel exempts the host root user from RLIMIT_NPROC, even
+			// inside a user namespace.
 			s.errf("警告：無法建立 pids cgroup，而以 root 執行時核心不套用 RLIMIT_NPROC——程序數上限此次無法強制")
+			lims = append(lims, report.ResourceLimit{Resource: "pids", Limit: fmt.Sprint(res.pids), Scope: report.ScopeNone, Mechanism: "（root 不受 RLIMIT_NPROC 限制）"})
 		} else {
+			// For a non-root user the count is kept per user namespace
+			// (Linux >= 5.14), so it bounds the shell's own processes and
+			// threads.
 			applied = append(applied, fmt.Sprintf("程序數 %d（RLIMIT_NPROC）", res.pids))
+			lims = append(lims, report.ResourceLimit{Resource: "pids", Limit: fmt.Sprint(res.pids), Scope: report.ScopeShell, Mechanism: "RLIMIT_NPROC"})
 		}
 	}
-	if !s.cg.Has("memory") {
-		rl = append(rl, sandbox.Rlimit{Resource: syscall.RLIMIT_AS, Cur: uint64(res.mem), Max: uint64(res.mem)})
-		applied = append(applied, fmt.Sprintf("虛擬記憶體 %s（RLIMIT_AS）", human(res.mem)))
+	lims = append(lims, report.ResourceLimit{Resource: "disk", Limit: human(res.disk), Scope: report.ScopeFile, Mechanism: "RLIMIT_FSIZE＋/tmp 容量"})
+	if s.m != nil && s.m.Runtime.Resources.CPU > 0 {
+		lims = append(lims, report.ResourceLimit{Resource: "cpu", Limit: fmt.Sprint(s.m.Runtime.Resources.CPU), Scope: report.ScopeNone, Mechanism: "（尚未實作）"})
 	}
+	s.resLimits = lims
 	s.resApplied = applied
 	s.res = res
 
@@ -612,6 +636,14 @@ func (s *session) resources() resources {
 		}
 	}
 	return r
+}
+
+// cgroupHint explains why no cgroup could be created for this user.
+func cgroupHint() string {
+	if os.Getuid() != 0 {
+		return "一般使用者通常沒有可寫入的 cgroup；需要 cgroup v2 並由 systemd 等委派子樹"
+	}
+	return "此系統沒有可用的 cgroup 控制器"
 }
 
 func human(n int64) string {
@@ -837,7 +869,8 @@ func (s *session) finish() (*Result, error) {
 		res.TracePath = p
 	}
 	if s.opt.Mode == ModeEnforce {
-		_ = report.WriteEnforce(s.appRoot, &report.Enforce{ManifestSHA256: s.loaded.SHA256, AppDigest: s.digest, Command: s.command, ExitCode: code, Denied: len(res.Denied)})
+		_ = report.WriteEnforce(s.appRoot, &report.Enforce{ManifestSHA256: s.loaded.SHA256, AppDigest: s.digest, Command: s.command, ExitCode: code, Denied: len(res.Denied),
+			Identity: report.CurrentIdentity(), Resources: s.resLimits})
 	}
 	return res, nil
 }

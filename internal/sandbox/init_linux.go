@@ -4,6 +4,7 @@ package sandbox
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -21,8 +22,20 @@ import (
 // InitArg is the hidden argv[1] that selects the shell init.
 const InitArg = "__shell-init"
 
+// ExecArg is the hidden argv[1] of the short-lived exec helper: it applies
+// the app's resource limits to itself and then execve()s the app. The
+// app's limits (memory in particular) must never be applied to the init
+// itself: a Go runtime that cannot grow its heap aborts, taking the whole
+// shell down.
+const ExecArg = "__shell-exec"
+
 // ctlFD is the control socket inherited by the shell init (ExtraFiles[0]).
 const ctlFD = 3
+
+// selfFD holds the warp binary, opened before pivot_root, so the init can
+// re-exec it as the exec helper without the binary being mounted in the
+// shell. It is close-on-exec: the app never inherits it.
+var selfFD = -1
 
 // RunInit is the entry point of the re-executed binary inside the new
 // namespaces. It never returns.
@@ -32,6 +45,9 @@ func RunInit() {
 		fatalInit(fmt.Sprintf("無法讀取殼設定：%v", err))
 	}
 	cfg := m.Config
+	if selfFD, err = unix.Open("/proc/self/exe", unix.O_RDONLY|unix.O_CLOEXEC, 0); err != nil {
+		fatalInit("無法開啟核心執行檔：" + err.Error())
+	}
 	if err := setupFS(cfg); err != nil {
 		fatalInit("建立合成檔案系統失敗：" + err.Error())
 	}
@@ -54,12 +70,6 @@ func RunInit() {
 		fatalInit(err.Error())
 	}
 	lf.Close()
-	for _, r := range cfg.Rlimits {
-		lim := unix.Rlimit{Cur: r.Cur, Max: r.Max}
-		if err := unix.Setrlimit(r.Resource, &lim); err != nil {
-			fatalInit(fmt.Sprintf("無法設定資源上限 %d：%v", r.Resource, err))
-		}
-	}
 	// Wait for the parent's go.
 	m, _, err = recvMsg(ctlFD)
 	if err != nil || m.T != "start" {
@@ -186,12 +196,45 @@ func dropAndFork(cfg *Config) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	return syscall.ForkExec(path, cfg.Argv, &syscall.ProcAttr{
+	// The app is started through the exec helper (a fresh copy of this
+	// binary), which applies the resource limits and then execs the app.
+	lims, err := json.Marshal(cfg.Rlimits)
+	if err != nil {
+		return 0, err
+	}
+	argv := append([]string{"warp-exec", ExecArg, string(lims), path}, cfg.Argv...)
+	return syscall.ForkExec(fmt.Sprintf("/proc/self/fd/%d", selfFD), argv, &syscall.ProcAttr{
 		Dir:   cfg.Cwd,
 		Env:   cfg.Env,
 		Files: []uintptr{0, 1, 2},
 		Sys:   &syscall.SysProcAttr{Setsid: true},
 	})
+}
+
+// RunExec is the entry point of the exec helper. It runs with no
+// capabilities and no_new_privs (inherited from the init's dropped thread),
+// applies every resource limit to itself and replaces itself with the app.
+// Any failure aborts the start: the app never runs without its limits.
+func RunExec(args []string) {
+	if len(args) < 3 {
+		fmt.Fprintln(os.Stderr, "warp（殼內）：exec helper: bad arguments")
+		os.Exit(126)
+	}
+	var lims []Rlimit
+	if err := json.Unmarshal([]byte(args[0]), &lims); err != nil {
+		fmt.Fprintln(os.Stderr, "warp（殼內）：exec helper:", err)
+		os.Exit(126)
+	}
+	for _, r := range lims {
+		lim := unix.Rlimit{Cur: r.Cur, Max: r.Max}
+		if err := unix.Setrlimit(r.Resource, &lim); err != nil {
+			fmt.Fprintf(os.Stderr, "warp（殼內）：無法設定資源上限 %d：%v\n", r.Resource, err)
+			os.Exit(126)
+		}
+	}
+	err := unix.Exec(args[1], args[2:], os.Environ())
+	fmt.Fprintf(os.Stderr, "warp（殼內）：無法啟動應用 %s：%v\n", args[1], err)
+	os.Exit(126)
 }
 
 func lookPath(name string, env []string) (string, error) {

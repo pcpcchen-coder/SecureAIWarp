@@ -182,6 +182,7 @@ exceptions:
 - **`runtime.isolation`**：此核心只實作 `process`；宣告 `container`、`microvm`、`wasm` 時檢查器警告、強制模式**拒絕執行**（不降級）。
 - **`runtime.spawn`**：可宣告但尚未強制（標籤的「程序」通道標示為「僅聲明」）。`runtime.background: true` 尚未支援。
 - **`runtime.resources`**：`memory`、`pids`、`disk` 以 cgroup（可用時）與 rlimit 盡力套用；未設定時使用預設值（1Gi、256、1Gi）。`cpu` 尚未套用。
+  沒有 cgroup 時記憶體上限只限單一程序；實際的套用方式與範圍寫在報告與標籤上（見 [03](03-architecture.md) 第 6.1 節）。
 - **`network.egress[].via: ai-gate`**：AI 閘門尚未實作，含此欄位的宣告在強制模式**拒絕執行**。
 - **`network.egress[].limits.upload_per_day`**：以目的地主機:連接埠為單位、依 UTC 日期累計，存在核心狀態目錄。
 - **`network.ingress`**：只支援 `expose: loopback` 搭配 `auth: local-token`，而且只代理 HTTP（WebSocket 升級未經測試）。

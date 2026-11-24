@@ -105,9 +105,14 @@ $W ledger verify               # 驗證稽核帳本的雜湊鏈
 強制模式需要的機密真值由**執行 warp 的主機環境變數**提供（例如 `NOTES_API_KEY=... warp enforce ...`），
 真值不會進入殼內；殼內只有佔位值，由對外閘門在送往綁定主機時注入標頭。
 
+warp 不需要 root，也不需要 setuid 輔助程式：以一般使用者執行時，隔離與各閘門的保證與 root 相同（兩者都經端對端測試）；
+唯一的差異是一般使用者通常沒有可用的 cgroup，記憶體上限會退為「每個程序」的 rlimit——核心會警告，標籤會以 ⚠ 標示。
+
 測試：`go test ./...`。`e2e/` 的端對端測試需要 root（用 veth 建立與網際網路隔離的測試網路），會實際執行
 [`examples/notes-app`](examples/notes-app/app.py)（正常應用）與 [`examples/evil-app`](examples/evil-app/app.py)
-（刻意做壞事的應用），並從殼外驗證每一項攻擊都被擋下。
+（刻意做壞事的應用），並從殼外驗證每一項攻擊都被擋下。每組測試各跑兩次：warp 以 root 執行一次，
+再以一般使用者（root 建好測試網路與測試檔案後，以 `WARP_E2E_UID`（預設 47613）降權）執行一次；
+`WARP_E2E_IDENTITIES=root` 或 `=user` 可只跑其中一種。
 
 ## 第 1 期實作狀態
 
@@ -119,7 +124,8 @@ $W ledger verify               # 驗證稽核帳本的雜湊鏈
 | 機密代理：佔位值、對綁定主機中止 TLS（每次執行產生、受名稱限制的本機 CA）後注入標頭、回應中的真值遮蔽 | 已實作（HTTP/1.1；HTTPS 與明文 HTTP） |
 | 對內閘門：只在主機 127.0.0.1 以一次性權杖開放、檢查 Host 標頭 | 已實作（僅 HTTP） |
 | `record` / `enforce` / `probe`、雜湊串接的稽核帳本、`label`、`draft`、`diff`、`init` | 已實作 |
-| 資源上限：cgroup（v1/v2，可用時）＋ rlimit | 盡力而為 |
+| 資源上限：cgroup（v1/v2，可用時）＋ rlimit | 盡力而為；實際套用範圍寫入報告與標籤 |
+| 以一般使用者（非 root）執行 | 已實作並經端對端測試（不需 setuid 輔助程式） |
 | 限制可執行的程式（`spawn`） | 僅聲明，未強制（標籤如實標示） |
 | macOS、`container`／`microvm`／`wasm` 後端 | 未實作：宣告要求時拒絕執行 |
 | AI 閘門、資料閘門、`survey`、`seal`、例外的同意簽章 | 未實作（第 2 期） |

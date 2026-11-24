@@ -108,6 +108,19 @@ func (c *Cgroup) Has(prefix string) bool {
 	return false
 }
 
+// Mechanism names the cgroup version that enforced a controller.
+func (c *Cgroup) Mechanism(prefix string) string {
+	for _, a := range c.Applied {
+		if strings.HasPrefix(a, prefix) {
+			if strings.Contains(a, "v2") {
+				return "cgroup v2"
+			}
+			return "cgroup v1"
+		}
+	}
+	return ""
+}
+
 // Add moves a process into the cgroup.
 func (c *Cgroup) Add(pid int) error {
 	for _, d := range c.dirs {

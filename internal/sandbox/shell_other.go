@@ -13,6 +13,9 @@ import (
 // InitArg is the hidden argv[1] that selects the shell init.
 const InitArg = "__shell-init"
 
+// ExecArg is the hidden argv[1] of the exec helper.
+const ExecArg = "__shell-exec"
+
 // Shell is unavailable on this platform.
 type Shell struct{}
 
@@ -32,6 +35,9 @@ func NewCgroup(string, int64, int) *Cgroup { return &Cgroup{} }
 // Has always reports false.
 func (c *Cgroup) Has(string) bool { return false }
 
+// Mechanism always reports nothing.
+func (c *Cgroup) Mechanism(string) string { return "" }
+
 // Remove is a no-op.
 func (c *Cgroup) Remove() {}
 
@@ -43,6 +49,9 @@ func Start(*Config, *Cgroup, Stdio) (*Shell, error) { return nil, ErrUnsupported
 
 // RunInit is never used on this platform.
 func RunInit() { os.Exit(126) }
+
+// RunExec is never used on this platform.
+func RunExec([]string) { os.Exit(126) }
 
 // EgressListener is never available.
 func (s *Shell) EgressListener() net.Listener { return nil }
