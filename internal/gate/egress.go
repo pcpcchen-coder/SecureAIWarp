@@ -330,15 +330,32 @@ func (g *Egress) handleConnect(c net.Conn, br *bufio.Reader, req *http.Request) 
 		return
 	}
 	if !inspect {
+		io.WriteString(c, "HTTP/1.1 200 Connection Established\r\n\r\n")
+		// Without terminating TLS we still check that the TLS server name
+		// matches the approved host (prevents domain fronting via SNI).
+		sni, isTLS, replay, err := peekSNI(c, br)
+		if err != nil {
+			d.ok, d.reason = false, "無法檢查 TLS 伺服器名稱"
+			g.logDecision("connect", target, d, err.Error())
+			return
+		}
+		if isTLS && sni != "" && netpolicy.NormalizeHost(sni) != host {
+			d.ok, d.reason = false, "TLS 伺服器名稱 "+sni+" 與核准的主機不符"
+			g.logDecision("connect", target, d, "")
+			return
+		}
 		up, err := g.dialIPs(context.Background(), d.ips, port)
 		if err != nil {
 			g.cfg.Ledger.Log("egress", "connect", "allow", target, "上游連線失敗："+err.Error())
-			writeBlocked(c, http.StatusBadGateway, "上游連線失敗")
 			return
 		}
-		g.logDecision("connect", target, d, "tunnel")
+		g.logDecision("connect", target, d, "tunnel sni="+sni)
 		defer up.Close()
-		io.WriteString(c, "HTTP/1.1 200 Connection Established\r\n\r\n")
+		if len(replay) > 0 {
+			if _, err := up.Write(replay); err != nil {
+				return
+			}
+		}
 		g.pipe(&bufConn{c, br}, up, d.rule, target)
 		return
 	}

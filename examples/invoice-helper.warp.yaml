@@ -56,6 +56,7 @@ secrets:
       inject:
         header: x-api-key
     visibility: gate-only         # 應用只看得到佔位值
+    purpose: 以你的金鑰呼叫模型分析發票
 
 ai:
   providers:

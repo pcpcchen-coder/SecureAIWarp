@@ -155,7 +155,7 @@ func setup() error {
 	// Operator-side name overrides for the gate (never visible to apps).
 	h.hosts = filepath.Join(h.dir, "hosts")
 	return os.WriteFile(h.hosts, []byte(fmt.Sprintf(
-		"%s api.notes.example evil.example\n127.0.0.1 status.notes.example\n10.0.0.5 lan.notes.example\n", upstreamIP)), 0o644)
+		"%s api.notes.example evil.example cdn.notes.example\n127.0.0.1 status.notes.example\n10.0.0.5 lan.notes.example\n", upstreamIP)), 0o644)
 }
 
 func makeCerts() (string, string, error) {
@@ -170,7 +170,7 @@ func makeCerts() (string, string, error) {
 	ca, _ := x509.ParseCertificate(caDER)
 	k, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	lt := &x509.Certificate{SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "api.notes.example"},
-		DNSNames:  []string{"api.notes.example", "evil.example", "status.notes.example"},
+		DNSNames:  []string{"api.notes.example", "evil.example", "status.notes.example", "cdn.notes.example"},
 		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(24 * time.Hour),
 		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
 	der, err := x509.CreateCertificate(rand.Reader, lt, ca, &k.PublicKey, caKey)

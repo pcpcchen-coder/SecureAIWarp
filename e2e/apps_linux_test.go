@@ -215,11 +215,12 @@ func TestEvilAppIsContained(t *testing.T) {
 	mustContain(t, "draft", s, "對外連線 status.notes.example:443") // blocked in record: denied_by_design
 	// The author insists on declaring the status host (its DNS answer points
 	// at loopback, i.e. a rebinding-style attack on a declared host).
-	if strings.Count(s, "  - host: ") != 1 || !strings.Contains(s, "\nsecrets:\n") {
+	mustContain(t, "draft", s, "host: cdn.notes.example")
+	if strings.Count(s, "  - host: ") != 2 || !strings.Contains(s, "\nsecrets:\n") {
 		t.Fatalf("unexpected draft layout:\n%s", s)
 	}
 	s = strings.Replace(s, "\nsecrets:\n", "\n    - host: status.notes.example\n      port: 443\n      purpose: 服務狀態檢查\nsecrets:\n", 1)
-	s = strings.Replace(s, "\nevidence:\n", "\nevidence:\n  - grant: network.egress[1]\n    observed_in: .warp/evidence/trace-0001.json\n    triggered_by: python3 app.py summarize\n", 1)
+	s = strings.Replace(s, "\nevidence:\n", "\nevidence:\n  - grant: network.egress[2]\n    observed_in: .warp/evidence/trace-0001.json\n    triggered_by: python3 app.py summarize\n", 1)
 	os.WriteFile(mf, []byte(s), 0o644)
 	if r := runWarp(t, env, "lint", "-C", app); r.code != 0 {
 		t.Fatalf("lint failed for evil manifest:\n%s", s)
@@ -241,6 +242,9 @@ func TestEvilAppIsContained(t *testing.T) {
 	if r.code != 0 {
 		t.Fatalf("attack run crashed (exit %d)", r.code)
 	}
+	if !strings.Contains(r.stdout, `{"control": "tunnel", "ok": true`) {
+		t.Errorf("positive control failed: an allowed, non-inspected tunnel must work")
+	}
 	attacks := map[string]bool{}
 	for _, line := range strings.Split(r.stdout, "\n") {
 		var a struct {
@@ -257,7 +261,7 @@ func TestEvilAppIsContained(t *testing.T) {
 	}
 	for _, name := range []string{"read_decoy_credential", "read_host_home_ssh", "list_host_dir", "exfil_https_undeclared",
 		"exfil_http_undeclared", "exfil_declared_host_other_port", "exfil_direct_socket", "exfil_dns_lookup",
-		"secret_env_is_real", "secret_reflected_by_api", "secret_to_undeclared_host", "secret_proc_environ",
+		"exfil_domain_fronting", "secret_env_is_real", "secret_reflected_by_api", "secret_to_undeclared_host", "secret_proc_environ",
 		"read_init_environ", "cloud_metadata", "host_loopback_service", "lan_by_name", "lan_by_ip",
 		"rebinding_declared_host", "host_loopback_direct", "write_outside", "write_app_dir", "delete_outside", "rmtree_outside"} {
 		if _, ok := attacks[name]; !ok {
@@ -276,7 +280,7 @@ func TestEvilAppIsContained(t *testing.T) {
 		if strings.HasPrefix(e.Host, "evil.example") || strings.Contains(e.Path, "collect") || strings.Contains(e.Body, "CONFIDENTIAL") {
 			t.Errorf("exfiltration reached the upstream: %+v", e)
 		}
-		if !strings.HasPrefix(e.Host, "api.notes.example") || !e.TLS {
+		if !(strings.HasPrefix(e.Host, "api.notes.example") || e.Host == "cdn.notes.example") || !e.TLS {
 			t.Errorf("unexpected upstream request: %+v", e)
 		}
 	}
@@ -308,7 +312,7 @@ func TestEvilAppIsContained(t *testing.T) {
 		}
 	}
 	for _, tgt := range []string{"evil.example:443", "evil.example:80", "api.notes.example:80", "169.254.169.254:80",
-		strings.TrimSuffix(strings.TrimPrefix(h.loopURL, "http://"), "/"), "lan.notes.example:80", "192.168.1.1:80", "status.notes.example:443"} {
+		strings.TrimSuffix(strings.TrimPrefix(h.loopURL, "http://"), "/"), "lan.notes.example:80", "192.168.1.1:80", "status.notes.example:443", "cdn.notes.example:443"} {
 		if !denied[tgt] {
 			t.Errorf("ledger has no deny entry for %s", tgt)
 		}

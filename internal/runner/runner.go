@@ -422,7 +422,7 @@ func (s *session) planSecrets() (map[string]string, error) {
 			s.secrets = append(s.secrets, gate.SecretBinding{Name: sec.Name, Host: sec.Bind.Host, Header: sec.Bind.Inject.Header, Placeholder: ph, Real: real})
 		}
 		for i, e := range s.m.Network.Egress {
-			r := gate.Rule{Host: e.Host, Port: e.Port, LAN: e.LAN, Grant: manifest.GrantRef(manifest.GrantEgress, i)}
+			r := gate.Rule{Host: e.Host, Port: e.Port, LAN: bool(e.LAN), Grant: manifest.GrantRef(manifest.GrantEgress, i)}
 			if e.Limits != nil && e.Limits.UploadPerDay != "" {
 				r.UploadLimit, _ = manifest.ParseSize(e.Limits.UploadPerDay)
 			}

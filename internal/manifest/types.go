@@ -3,6 +3,12 @@
 // no conditions, no scripts, no executable content.
 package manifest
 
+import (
+	"fmt"
+
+	"gopkg.in/yaml.v3"
+)
+
 // FormatVersion is the only manifest format version this core accepts.
 const FormatVersion = "0.1"
 
@@ -36,10 +42,10 @@ type App struct {
 
 // Runtime covers the process channel.
 type Runtime struct {
-	Isolation  string    `yaml:"isolation" json:"isolation"`
-	Resources  Resources `yaml:"resources,omitempty" json:"resources,omitempty"`
-	Spawn      string    `yaml:"spawn" json:"spawn"`
-	Background bool      `yaml:"background" json:"background"`
+	Isolation  string     `yaml:"isolation" json:"isolation"`
+	Resources  Resources  `yaml:"resources,omitempty" json:"resources,omitempty"`
+	Spawn      string     `yaml:"spawn" json:"spawn"`
+	Background StrictBool `yaml:"background" json:"background"`
 }
 
 // Resources are best-effort limits applied by the isolation backend.
@@ -68,7 +74,7 @@ type Egress struct {
 	Host    string        `yaml:"host" json:"host"`
 	Port    int           `yaml:"port" json:"port"`
 	Via     string        `yaml:"via,omitempty" json:"via,omitempty"`
-	LAN     bool          `yaml:"lan,omitempty" json:"lan,omitempty"`
+	LAN     StrictBool    `yaml:"lan,omitempty" json:"lan,omitempty"`
 	Purpose string        `yaml:"purpose" json:"purpose"`
 	Limits  *EgressLimits `yaml:"limits,omitempty" json:"limits,omitempty"`
 }
@@ -195,6 +201,20 @@ type Evidence struct {
 type Denied struct {
 	Behavior string `yaml:"behavior" json:"behavior"`
 	Reason   string `yaml:"reason" json:"reason"`
+}
+
+// StrictBool only accepts a YAML boolean (true/false). yaml.v3 would
+// otherwise also accept YAML 1.1 words such as "yes", "no", "on" or "off",
+// even when quoted.
+type StrictBool bool
+
+// UnmarshalYAML implements yaml.Unmarshaler.
+func (b *StrictBool) UnmarshalYAML(n *yaml.Node) error {
+	if n.Kind != yaml.ScalarNode || n.ShortTag() != "!!bool" || (n.Value != "true" && n.Value != "false") {
+		return fmt.Errorf("第 %d 行：必須是 true 或 false", n.Line)
+	}
+	*b = n.Value == "true"
+	return nil
 }
 
 // Enumerations.

@@ -407,6 +407,15 @@ func setupFS(cfg *Config) error {
 	if err := unix.Mount("proc", filepath.Join(R, "proc"), "proc", unix.MS_NOSUID|unix.MS_NODEV|unix.MS_NOEXEC, ""); err != nil {
 		return fmt.Errorf("mount proc: %w", err)
 	}
+	// Defence in depth: forbid nested user namespaces inside the shell. They
+	// cannot unlock our read-only mounts, but they expose a large amount of
+	// kernel code to the app. The limit is per user namespace and owned by
+	// this init.
+	for _, f := range []string{"user/max_user_namespaces", "user/max_net_namespaces"} {
+		if err := os.WriteFile(filepath.Join(R, "proc/sys", f), []byte("0"), 0); err != nil {
+			fmt.Fprintf(os.Stderr, "warp（殼內）：警告：無法設定 %s=0：%v\n", f, err)
+		}
+	}
 	// /dev with a minimal set of device nodes.
 	dev := filepath.Join(R, "dev")
 	if err := os.MkdirAll(dev, 0o755); err != nil {
