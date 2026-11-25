@@ -28,6 +28,7 @@ type Shell struct {
 	exitCode int
 	exited   chan struct{}
 	started  chan struct{}
+	startOne sync.Once
 	initErr  string
 	waitErr  error
 	waitOnce sync.Once
@@ -166,7 +167,11 @@ func (s *Shell) readLoop() {
 		}
 		switch m.T {
 		case "started":
-			close(s.started)
+			// Once only: a repeated message must never crash the core.
+			s.startOne.Do(func() { close(s.started) })
+			if fd >= 0 {
+				unix.Close(fd)
+			}
 		case "dialed":
 			s.mu.Lock()
 			ch := s.pending[m.ID]

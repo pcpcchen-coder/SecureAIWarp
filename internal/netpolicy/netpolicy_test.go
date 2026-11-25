@@ -78,3 +78,13 @@ func TestNames(t *testing.T) {
 		}
 	}
 }
+
+func TestAzureWireServerIsMetadata(t *testing.T) {
+	ip := netip.MustParseAddr("168.63.129.16")
+	if c := Classify(ip); c != Metadata {
+		t.Fatalf("168.63.129.16 classified as %s", c)
+	}
+	if _, ok := Check(ip, true, nil); ok {
+		t.Fatal("the Azure WireServer address must never be dialled, even with lan: true")
+	}
+}

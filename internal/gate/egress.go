@@ -261,13 +261,54 @@ func writeBlocked(w io.Writer, status int, reason string) {
 		status, http.StatusText(status), url.QueryEscape(reason), len(body), body)
 }
 
+// maxRequestHead bounds the request line plus headers of one proxied
+// request. http.ReadRequest itself has no limit, and the gate's memory is
+// outside the shell's memory limit: without a bound the app could make the
+// core buffer an endless header line and exhaust the host's memory.
+const maxRequestHead = 1 << 20
+
+var errHeadTooLarge = errors.New("request head too large")
+
+// headLimiter fails reads once more than the armed budget has been consumed
+// while a request head is being parsed; bodies are read with it disarmed.
+type headLimiter struct {
+	r     io.Reader
+	left  int64
+	armed bool
+}
+
+func (h *headLimiter) arm()    { h.left, h.armed = maxRequestHead, true }
+func (h *headLimiter) disarm() { h.armed = false }
+
+func (h *headLimiter) Read(p []byte) (int, error) {
+	if !h.armed {
+		return h.r.Read(p)
+	}
+	if h.left <= 0 {
+		return 0, errHeadTooLarge
+	}
+	if int64(len(p)) > h.left {
+		p = p[:h.left]
+	}
+	n, err := h.r.Read(p)
+	h.left -= int64(n)
+	return n, err
+}
+
 func (g *Egress) handle(c net.Conn) {
 	defer c.Close()
-	br := bufio.NewReader(c)
+	lim := &headLimiter{r: c}
+	br := bufio.NewReader(lim)
 	for {
 		c.SetReadDeadline(time.Now().Add(5 * time.Minute))
+		lim.arm()
 		req, err := http.ReadRequest(br)
+		lim.disarm()
 		if err != nil {
+			if errors.Is(err, errHeadTooLarge) {
+				g.cfg.Ledger.Log("egress", "request", "deny", "", "請求標頭超過大小上限")
+				writeBlocked(c, http.StatusRequestHeaderFieldsTooLarge, "請求標頭過大")
+			}
 			return
 		}
 		c.SetReadDeadline(time.Time{})
@@ -352,6 +393,15 @@ func (g *Egress) handleConnect(c net.Conn, br *bufio.Reader, req *http.Request) 
 			g.logDecision("connect", target, d, "")
 			return
 		}
+		// A TLS client that names a host always sends that name. A hello
+		// without one, to a named host, lets a shared front end pick its
+		// default site while the real destination hides in the encrypted
+		// Host header: the same fronting the check above exists to stop.
+		if _, isIP := netpolicy.ParseIPLiteral(host); isTLS && sni == "" && !isIP {
+			d.ok, d.reason = false, "TLS 交握沒有伺服器名稱，無法確認目的地是核准的主機"
+			g.logDecision("connect", target, d, "")
+			return
+		}
 		up, err := g.dialIPs(context.Background(), d.ips, port)
 		if err != nil {
 			g.cfg.Ledger.Log("egress", "connect", "allow", target, "上游連線失敗："+err.Error())
@@ -389,11 +439,18 @@ func (g *Egress) handleConnect(c net.Conn, br *bufio.Reader, req *http.Request) 
 		return
 	}
 	tc.SetDeadline(time.Time{})
-	tbr := bufio.NewReader(tc)
+	tlim := &headLimiter{r: tc}
+	tbr := bufio.NewReader(tlim)
 	for {
 		tc.SetReadDeadline(time.Now().Add(5 * time.Minute))
+		tlim.arm()
 		r, err := http.ReadRequest(tbr)
+		tlim.disarm()
 		if err != nil {
+			if errors.Is(err, errHeadTooLarge) {
+				g.cfg.Ledger.Log("egress", "request", "deny", target, "請求標頭超過大小上限")
+				writeBlocked(tc, http.StatusRequestHeaderFieldsTooLarge, "請求標頭過大")
+			}
 			return
 		}
 		tc.SetReadDeadline(time.Time{})
@@ -477,6 +534,17 @@ func (g *Egress) forward(w io.Writer, req *http.Request, scheme, host string, po
 	if g.cfg.Mode == ModeRecord && len(g.cfg.Decoys) > 0 {
 		g.scanDecoys(out, host)
 	}
+	// The upload limit covers everything the app can put data in, not only
+	// the body: otherwise it is bypassed by exfiltrating through the URL and
+	// headers of body-less requests.
+	if rule != nil && rule.UploadLimit > 0 && g.cfg.Usage != nil {
+		if err := g.cfg.Usage.Add(target, requestHeadSize(req), rule.UploadLimit); err != nil {
+			g.cfg.Notify(fmt.Sprintf("已阻擋對 %s 的上傳（超過每日上傳上限）", target))
+			g.cfg.Ledger.Log("egress", "upload", "deny", target, "超過每日上傳上限")
+			writeBlocked(w, http.StatusForbidden, "超過每日上傳上限")
+			return false
+		}
+	}
 	// Enforce mode: inject real values for bound secrets.
 	injected := []string{}
 	for _, s := range g.cfg.Secrets {
@@ -486,6 +554,21 @@ func (g *Egress) forward(w io.Writer, req *http.Request, scheme, host string, po
 		vals := out.Header.Values(s.Header)
 		if len(vals) == 0 {
 			continue
+		}
+		// Never put a real secret on the wire in clear text towards a TLS
+		// port: the app picks the scheme, and plain http:// to :443 would
+		// hand the key to anyone on the network path.
+		if scheme == "http" && port == 443 {
+			carries := false
+			for _, v := range vals {
+				carries = carries || strings.Contains(v, s.Placeholder)
+			}
+			if carries {
+				d := decision{reason: "拒絕以明文 HTTP 把機密 " + s.Name + " 送往 TLS 連接埠"}
+				g.logDecision("request", target, d, "")
+				writeBlocked(w, http.StatusForbidden, d.reason)
+				return false
+			}
 		}
 		var nv []string
 		did := false
@@ -556,6 +639,20 @@ func (g *Egress) forward(w io.Writer, req *http.Request, scheme, host string, po
 		return false
 	}
 	return !req.Close
+}
+
+// requestHeadSize approximates the bytes of the request line and headers.
+func requestHeadSize(req *http.Request) int64 {
+	n := len(req.Method) + len(req.Host) + 16
+	if req.URL != nil {
+		n += len(req.URL.RequestURI())
+	}
+	for k, vs := range req.Header {
+		for _, v := range vs {
+			n += len(k) + len(v) + 4
+		}
+	}
+	return int64(n)
 }
 
 // redactPairs maps every real secret value (and every decoy) back to its

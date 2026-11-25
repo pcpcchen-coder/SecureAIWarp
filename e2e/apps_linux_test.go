@@ -14,6 +14,8 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 // TestNotesAppLifecycle walks the full fitting protocol on a well-behaved
@@ -293,6 +295,15 @@ func testEvilAppIsContained(t *testing.T, w *who) {
 	w.mustOwn(t, victimDir, victim, fakeHome, filepath.Dir(decoy), decoy, app, notes)
 	logBefore := len(upstreamEntries(t))
 	loopBefore := h.loopHits.Load()
+	// A key in the session keyring warp is started from: the shell's
+	// processes inherit that keyring unless the core replaces it.
+	if id, err := unix.AddKey("user", "warp-e2e-host-key", []byte("host keyring secret"), unix.KEY_SPEC_SESSION_KEYRING); err == nil {
+		// The unprivileged identity must be able to find it without the shell.
+		unix.KeyctlSetperm(id, 0x3f3f3f3f)
+		defer unix.KeyctlInt(unix.KEYCTL_UNLINK, id, unix.KEY_SPEC_SESSION_KEYRING, 0, 0)
+	} else {
+		t.Logf("no kernel keyring available (%v): host_session_keyring is not exercised", err)
+	}
 
 	r = runWarp(t, w, warpEnv(w, "NOTES_API_KEY="+realKey), "enforce", "-C", app, "--pick", "notes="+notes, "--",
 		"python3", "app.py", "attack", "--decoy", decoy, "--host-home", fakeHome, "--victim", victim,
@@ -321,7 +332,8 @@ func testEvilAppIsContained(t *testing.T, w *who) {
 		"exfil_http_undeclared", "exfil_declared_host_other_port", "exfil_direct_socket", "exfil_dns_lookup",
 		"exfil_domain_fronting", "secret_env_is_real", "secret_reflected_by_api", "secret_to_undeclared_host", "secret_proc_environ",
 		"read_init_environ", "cloud_metadata", "host_loopback_service", "lan_by_name", "lan_by_ip",
-		"rebinding_declared_host", "host_loopback_direct", "write_outside", "write_app_dir", "delete_outside", "rmtree_outside"} {
+		"rebinding_declared_host", "host_loopback_direct", "write_outside", "write_app_dir", "delete_outside", "rmtree_outside",
+		"inherited_descriptor", "host_sysctl_write", "host_session_keyring"} {
 		if _, ok := attacks[name]; !ok {
 			t.Errorf("attack %s did not report", name)
 		}

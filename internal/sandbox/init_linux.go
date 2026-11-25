@@ -40,6 +40,13 @@ var selfFD = -1
 // RunInit is the entry point of the re-executed binary inside the new
 // namespaces. It never returns.
 func RunInit() {
+	// Nothing but stdio may ever reach the app. The control socket arrives
+	// without close-on-exec (it is passed through exec), and the process that
+	// started warp may itself have leaked descriptors into us; mark all of
+	// them close-on-exec before anything else happens.
+	if err := cloexecInherited(); err != nil {
+		fatalInit("無法封閉繼承的檔案描述元：" + err.Error())
+	}
 	m, _, err := recvMsg(ctlFD)
 	if err != nil || m.T != "config" || m.Config == nil {
 		fatalInit(fmt.Sprintf("無法讀取殼設定：%v", err))
@@ -149,6 +156,27 @@ func RunInit() {
 	}
 }
 
+// cloexecInherited sets close-on-exec on every open descriptor above stderr.
+// A descriptor the app inherited would be a hole in the shell: the control
+// socket lets it forge messages to the core, and an unrelated leaked
+// descriptor may refer to anything on the host.
+func cloexecInherited() error {
+	ents, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		return err
+	}
+	for _, e := range ents {
+		fd, err := strconv.Atoi(e.Name())
+		if err != nil || fd <= 2 {
+			continue
+		}
+		if _, err := unix.FcntlInt(uintptr(fd), unix.F_SETFD, unix.FD_CLOEXEC); err != nil && err != unix.EBADF {
+			return fmt.Errorf("fd %d: %w", fd, err)
+		}
+	}
+	return nil
+}
+
 func fatalInit(s string) {
 	fmt.Fprintln(os.Stderr, "warp（殼內）："+s)
 	_ = sendMsg(ctlFD, &msg{T: "error", Err: s}, -1)
@@ -191,6 +219,14 @@ func dropAndFork(cfg *Config) (int, error) {
 	var data [2]unix.CapUserData
 	if err := unix.Capset(&hdr, &data[0]); err != nil {
 		return 0, fmt.Errorf("capset: %w", err)
+	}
+	// A session keyring is inherited across clone() and stays "possessed"
+	// inside the new user namespace, so without this the app could read
+	// every key reachable from the session keyring of whoever started warp
+	// (Kerberos tickets, fscrypt / eCryptfs / CIFS credentials, ...). Join a
+	// new, empty, anonymous one on this thread; the app is forked from it.
+	if _, _, e := unix.Syscall(unix.SYS_KEYCTL, unix.KEYCTL_JOIN_SESSION_KEYRING, 0, 0); e != 0 && e != unix.ENOSYS {
+		return 0, fmt.Errorf("join new session keyring: %w", e)
 	}
 	path, err := lookPath(cfg.Argv[0], cfg.Env)
 	if err != nil {
@@ -450,14 +486,17 @@ func setupFS(cfg *Config) error {
 	if err := unix.Mount("proc", filepath.Join(R, "proc"), "proc", unix.MS_NOSUID|unix.MS_NODEV|unix.MS_NOEXEC, ""); err != nil {
 		return fmt.Errorf("mount proc: %w", err)
 	}
-	// Defence in depth: forbid nested user namespaces inside the shell. They
-	// cannot unlock our read-only mounts, but they expose a large amount of
-	// kernel code to the app. The limit is per user namespace and owned by
-	// this init.
+	// Forbid nested user namespaces inside the shell. They cannot unlock our
+	// read-only mounts, but they expose a large amount of kernel code to the
+	// app. The limit is per user namespace and owned by this init. Fail
+	// closed: a shell that cannot set it does not start.
 	for _, f := range []string{"user/max_user_namespaces", "user/max_net_namespaces"} {
 		if err := os.WriteFile(filepath.Join(R, "proc/sys", f), []byte("0"), 0); err != nil {
-			fmt.Fprintf(os.Stderr, "warp（殼內）：警告：無法設定 %s=0：%v\n", f, err)
+			return fmt.Errorf("無法設定 %s=0：%w", f, err)
 		}
+	}
+	if err := hardenProc(filepath.Join(R, "proc")); err != nil {
+		return err
 	}
 	// /dev with a minimal set of device nodes.
 	dev := filepath.Join(R, "dev")
@@ -572,6 +611,46 @@ func setupFS(cfg *Config) error {
 	if cfg.Cwd != "" {
 		if err := unix.Chdir(cfg.Cwd); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// procReadOnly are kernel control interfaces under /proc. Their permission
+// checks are by user ID, not by capability: when warp runs as root, UID 0 in
+// the shell is the host's root, and without this the app could rewrite host
+// sysctls (kernel.core_pattern runs a host program as real root on the next
+// crash), trigger sysrq, or retarget interrupts. They are bound read-only;
+// the app has no capability to remount or unmount them.
+var procReadOnly = []string{"sys", "sysrq-trigger", "irq", "bus", "fs"}
+
+// procMasked expose host-wide state the app has no business reading.
+var procMasked = []string{"kcore", "kmsg", "keys", "key-users", "kallsyms", "timer_list", "sched_debug",
+	"latency_stats", "acpi", "asound", "scsi", "sysvipc", "config.gz", "mtrr", "kpagecount", "kpageflags", "kpagecgroup"}
+
+func hardenProc(proc string) error {
+	for _, n := range procReadOnly {
+		p := filepath.Join(proc, n)
+		if _, err := os.Lstat(p); err != nil {
+			continue
+		}
+		if err := bind(p, p, false, true); err != nil {
+			return fmt.Errorf("保護 /proc/%s 失敗：%w", n, err)
+		}
+	}
+	for _, n := range procMasked {
+		p := filepath.Join(proc, n)
+		st, err := os.Lstat(p)
+		if err != nil {
+			continue
+		}
+		if st.IsDir() {
+			err = unix.Mount("tmpfs", p, "tmpfs", unix.MS_RDONLY|unix.MS_NOSUID|unix.MS_NODEV|unix.MS_NOEXEC, "size=4k,mode=0555")
+		} else {
+			err = unix.Mount("/dev/null", p, "", unix.MS_BIND, "")
+		}
+		if err != nil {
+			return fmt.Errorf("遮蔽 /proc/%s 失敗：%w", n, err)
 		}
 	}
 	return nil

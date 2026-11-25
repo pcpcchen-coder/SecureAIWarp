@@ -53,6 +53,7 @@ var metadataAddrs = map[netip.Addr]bool{
 	netip.MustParseAddr("169.254.170.2"):   true, // ECS task metadata
 	netip.MustParseAddr("100.100.100.200"): true, // Alibaba Cloud
 	netip.MustParseAddr("fd00:ec2::254"):   true, // AWS IPv6 IMDS
+	netip.MustParseAddr("168.63.129.16"):   true, // Azure WireServer (a public-range address only reachable from the VM)
 }
 
 func mustPrefixes(ss ...string) []netip.Prefix {

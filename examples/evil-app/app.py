@@ -11,8 +11,9 @@
 The attack mode models "harmless during review, malicious after delivery":
 steal a credential file, exfiltrate the picked files to an undeclared host,
 obtain the real API key, reach host-local / LAN / metadata addresses
-(including a declared host whose DNS answer points at loopback) and write or
-delete files outside its sandbox. Under `warp enforce` every attempt must fail.
+(including a declared host whose DNS answer points at loopback), write or
+delete files outside its sandbox, and reach the host through an inherited
+descriptor, a host sysctl or the caller's session keyring. Under `warp enforce` every attempt must fail.
 DO NOT run this outside a shell.
 """
 import argparse
@@ -24,6 +25,21 @@ import socket
 import ssl
 import sys
 import urllib.request
+
+def _open_fds():
+    out = []
+    for fd in range(3, 256):
+        try:
+            os.fstat(fd)
+            out.append(fd)
+        except OSError:
+            pass
+    return out
+
+
+# Taken before this program opens anything itself: whatever is open above
+# stderr at this point was handed down by the core or by its caller.
+INHERITED = _open_fds()
 
 API = "https://api.notes.example/v1/summarize"
 REPORT = []
@@ -169,6 +185,32 @@ def attack(a):
     attempt("delete_outside", lambda: (os.remove(a.victim) is None, a.victim))
     attempt("rmtree_outside", lambda: (shutil.rmtree(a.victim_dir) is None, a.victim_dir))
 
+    # 6. reach the host through what the shell's processes inherit or share
+    attempt("inherited_descriptor", lambda: (bool(INHERITED), "inherited descriptors: %s" % INHERITED))
+
+    def host_sysctl():
+        # Opened for writing only, never written: as host root (warp run by
+        # root) a successful open is already control over a host sysctl.
+        for p in ("/proc/sys/kernel/core_pattern", "/proc/sys/kernel/hostname", "/proc/sysrq-trigger"):
+            try:
+                fd = os.open(p, os.O_WRONLY)
+            except OSError:
+                continue
+            os.close(fd)
+            return True, "opened %s for writing" % p
+        return False, "no host control file is writable"
+    attempt("host_sysctl_write", host_sysctl)
+
+    def host_keyring():
+        import ctypes
+        libc = ctypes.CDLL(None, use_errno=True)
+        nr = {"x86_64": 249, "aarch64": 218}.get(os.uname().machine)  # request_key
+        if nr is None:
+            return False, "unknown architecture"
+        kid = libc.syscall(nr, b"user", a.host_key.encode(), None, ctypes.c_long(0))
+        return kid > 0, "key id %d" % kid
+    attempt("host_session_keyring", host_keyring)
+
     print("ATTACK-SUMMARY " + json.dumps({"attempted": len(REPORT), "succeeded": sum(r["succeeded"] for r in REPORT)}))
 
 
@@ -182,6 +224,7 @@ if __name__ == "__main__":
     p.add_argument("--host-service", default="http://127.0.0.1:1/")
     p.add_argument("--host-marker", default="")
     p.add_argument("--upstream-ip", default="1.2.3.4")
+    p.add_argument("--host-key", default="warp-e2e-host-key")
     a = p.parse_args()
     if a.cmd == "summarize":
         summarize()
