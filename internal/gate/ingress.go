@@ -23,6 +23,9 @@ const (
 	TokenHeader = "X-Warp-Token"
 )
 
+// cookiePrefix starts the name of every ingress token cookie.
+const cookiePrefix = "warp_token_"
+
 // NewToken returns a random 256-bit token.
 func NewToken() string {
 	b := make([]byte, 32)
@@ -66,7 +69,7 @@ func StartIngress(innerPort, preferPort int, token string, dial func(port int) (
 	}
 	hostPort := ln.Addr().(*net.TCPAddr).Port
 	in := &Ingress{InnerPort: innerPort, HostPort: hostPort, Token: token, ln: ln}
-	cookieName := "warp_token_" + strconv.Itoa(hostPort)
+	cookieName := cookiePrefix + strconv.Itoa(hostPort)
 	target := &url.URL{Scheme: "http", Host: fmt.Sprintf("127.0.0.1:%d", innerPort)}
 	rp := &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
@@ -79,10 +82,13 @@ func StartIngress(innerPort, preferPort int, token string, dial func(port int) (
 				q.Del(TokenParam)
 				pr.Out.URL.RawQuery = q.Encode()
 			}
-			// Remove the gate's own cookie before it reaches the app.
+			// Remove every ingress token cookie before it reaches the app.
+			// Browsers do not separate cookies by port, so the cookie of
+			// another shell's gate on 127.0.0.1 arrives here too; passing
+			// it on would hand that shell's token to this app.
 			var keep []string
 			for _, c := range pr.In.Cookies() {
-				if c.Name != cookieName {
+				if !strings.HasPrefix(c.Name, cookiePrefix) {
 					keep = append(keep, c.Name+"="+c.Value)
 				}
 			}
@@ -122,11 +128,25 @@ func StartIngress(innerPort, preferPort int, token string, dial func(port int) (
 		fmt.Sprintf("127.0.0.1:%d", hostPort): true,
 		fmt.Sprintf("localhost:%d", hostPort): true,
 	}
+	allowedOrigins := map[string]bool{}
+	for h := range allowedHosts {
+		allowedOrigins["http://"+h] = true
+	}
 	tgt := fmt.Sprintf("127.0.0.1:%d->shell:%d", hostPort, innerPort)
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !allowedHosts[strings.ToLower(r.Host)] {
 			lg.Log("ingress", "request", "deny", tgt, "Host 標頭不符："+r.Host)
 			http.Error(w, "SecureAIWarp：Host 標頭不符", http.StatusForbidden)
+			return
+		}
+		// A browser request made by a page of another origin carries Origin.
+		// Every local port is the same "site", so SameSite does not stop a
+		// page served from another port on this machine (another shell's
+		// app, say) from sending requests here with the token cookie.
+		if o := r.Header.Get("Origin"); o != "" && !allowedOrigins[strings.ToLower(o)] {
+			lg.Log("ingress", "request", "deny", tgt, "來自其他來源的請求："+o)
+			notify(fmt.Sprintf("已阻擋來自其他網頁來源（%s）的連入請求 %s %s", o, r.Method, r.URL.Path))
+			http.Error(w, "SecureAIWarp：不接受其他來源的請求", http.StatusForbidden)
 			return
 		}
 		q := r.URL.Query()

@@ -19,7 +19,12 @@ type Usage struct {
 	dir   string
 	day   string
 	bytes map[string]int64
+	saved time.Time
 }
+
+// flushEvery bounds how much accounted upload can be lost (and so sent
+// again for free on the next run) if the core dies without cleaning up.
+const flushEvery = time.Second
 
 func usagePath(dir, day string) string { return filepath.Join(dir, "usage-"+day+".json") }
 
@@ -43,6 +48,9 @@ func (u *Usage) Add(target string, n, limit int64) error {
 		return ErrUploadLimit
 	}
 	u.bytes[target] += n
+	if time.Since(u.saved) >= flushEvery {
+		u.flushLocked()
+	}
 	return nil
 }
 
@@ -50,6 +58,7 @@ func (u *Usage) flushLocked() {
 	if u.dir == "" {
 		return
 	}
+	u.saved = time.Now()
 	b, _ := json.Marshal(u.bytes)
 	tmp := usagePath(u.dir, u.day) + ".tmp"
 	if os.WriteFile(tmp, b, 0o600) == nil {
