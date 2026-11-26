@@ -5,7 +5,9 @@
 package draft
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -30,8 +32,24 @@ type seen struct {
 	write   bool
 }
 
+// Options tune FromDir.
+type Options struct {
+	// IncludeFailed also uses traces whose command exited with a non-zero
+	// code (other than an interrupt). By default they are left out.
+	IncludeFailed bool
+}
+
+// interrupted reports exit codes of a command stopped by SIGINT (Ctrl+C)
+// or SIGTERM, the normal way to stop a server; such traces are used.
+func interrupted(code int) bool { return code == 130 || code == 143 }
+
 // FromDir builds a draft from every valid trace in dir.
 func FromDir(appRoot, dir string, key []byte) (*Draft, error) {
+	return FromDirWith(appRoot, dir, key, Options{})
+}
+
+// FromDirWith builds a draft from the valid traces in dir.
+func FromDirWith(appRoot, dir string, key []byte, opt Options) (*Draft, error) {
 	paths, err := evidence.ListTraces(dir)
 	if err != nil {
 		return nil, fmt.Errorf("無法讀取側錄目錄：%w", err)
@@ -52,6 +70,9 @@ func FromDir(appRoot, dir string, key []byte) (*Draft, error) {
 		return nil, err
 	}
 	var lastCmd []string
+	lastTrace := ""
+	var failed []string
+	listenCmds := map[int][]string{}
 	for _, p := range paths {
 		t, err := evidence.Load(p, key)
 		if err != nil {
@@ -65,7 +86,17 @@ func FromDir(appRoot, dir string, key []byte) (*Draft, error) {
 		rel, _ := filepath.Rel(appRoot, p)
 		rel = filepath.ToSlash(rel)
 		trig := evidence.CommandString(t.Command)
+		if t.ExitCode != 0 && !interrupted(t.ExitCode) {
+			if !opt.IncludeFailed {
+				failed = append(failed, fmt.Sprintf("%s（結束碼 %d：%s）", filepath.Base(p), t.ExitCode, trig))
+				continue
+			}
+			d.Notes = append(d.Notes, fmt.Sprintf("⚠ 已依 --include-failed 採用失敗的側錄 %s（結束碼 %d：%s）當證據；它引用的行為可能來自錯誤處理路徑", filepath.Base(p), t.ExitCode, trig))
+		} else if interrupted(t.ExitCode) {
+			d.Notes = append(d.Notes, fmt.Sprintf("%s 的指令以結束碼 %d 結束（被 Ctrl+C 或 SIGTERM 中斷），視為正常停止並採用：%s", filepath.Base(p), t.ExitCode, trig))
+		}
 		lastCmd = t.Command
+		lastTrace = filepath.Base(p)
 		for _, e := range t.Events {
 			switch e.Channel {
 			case evidence.ChanFile:
@@ -91,6 +122,9 @@ func FromDir(appRoot, dir string, key []byte) (*Draft, error) {
 				if ingress[e.Port] == nil {
 					ingress[e.Port] = &seen{trace: rel, trigger: trig}
 				}
+				if !contains(listenCmds[e.Port], trig) {
+					listenCmds[e.Port] = append(listenCmds[e.Port], trig)
+				}
 			case evidence.ChanSecret:
 				if e.Location != "header" {
 					visibleOnly[e.Name] = fmt.Sprintf("%s（%s）", e.Host, e.Location)
@@ -103,8 +137,11 @@ func FromDir(appRoot, dir string, key []byte) (*Draft, error) {
 			}
 		}
 	}
+	if len(failed) > 0 {
+		d.Notes = append(d.Notes, "已略過結束碼非 0 的側錄（不當證據）："+strings.Join(failed, "；")+"。若確實要用，請加 --include-failed；不需要的側錄檔可移出 .warp/evidence/")
+	}
 	if lastCmd == nil {
-		return nil, fmt.Errorf("沒有任何有效的側錄紀錄：%s", strings.Join(d.Notes, "；"))
+		return nil, fmt.Errorf("沒有任何可用的側錄紀錄：%s", strings.Join(d.Notes, "；"))
 	}
 	name := strings.ToLower(filepath.Base(appRoot))
 	name = strings.Map(func(r rune) rune {
@@ -113,10 +150,16 @@ func FromDir(appRoot, dir string, key []byte) (*Draft, error) {
 		}
 		return '-'
 	}, name)
+	version, vsrc := appVersion(appRoot)
+	if vsrc == "" {
+		d.Notes = append(d.Notes, "找不到 package.json 或 pyproject.toml 中的版本，app.version 暫填 "+version+"；請改成應用的實際版本")
+	} else {
+		d.Notes = append(d.Notes, fmt.Sprintf("app.version 取自 %s：%s", vsrc, version))
+	}
 	m := &manifest.Manifest{
 		Warp: manifest.FormatVersion,
 		App: manifest.App{
-			Name: strings.Trim(name, "-_"), DisplayName: filepath.Base(appRoot), Version: "0.1.0",
+			Name: strings.Trim(name, "-_"), DisplayName: filepath.Base(appRoot), Version: version,
 			Kind: "cli", Entry: lastCmd, Digest: digest,
 		},
 		Runtime: manifest.Runtime{
@@ -127,10 +170,12 @@ func FromDir(appRoot, dir string, key []byte) (*Draft, error) {
 		Exceptions: []manifest.Exception{},
 		Evidence:   []manifest.Evidence{},
 	}
-	if len(ingress) > 0 {
-		m.App.Kind = "local-web"
+	entryNote := fmt.Sprintf("⚠ 請確認 app.entry：初稿取自最後一次採用的側錄（%s）的指令 %s，連同其中所有參數；若那是測試指令或帶有一次性的參數，請改成正式的啟動指令", lastTrace, evidence.CommandString(lastCmd))
+	d.Notes = append(d.Notes, entryNote)
+	d.Notes = append(d.Notes, "app.kind 暫填 cli；請依應用型態改成 cli | desktop | local-web | hosted | mcp-server | agent | job")
+	for _, p := range sortedInts(listenCmds) {
+		d.Notes = append(d.Notes, fmt.Sprintf("network.ingress（%d 埠）來自側錄中的監聽：%s。若這是測試時臨時開的伺服器而不是應用提供的介面，請刪除這條授權與對應的 evidence", p, strings.Join(listenCmds[p], "；")))
 	}
-	d.Notes = append(d.Notes, fmt.Sprintf("app.entry 取自最後一次側錄的指令 %q；若那是測試指令，請改成正式的啟動指令", strings.Join(lastCmd, " ")))
 	addEv := func(grant string, s *seen) {
 		m.Evidence = append(m.Evidence, manifest.Evidence{Grant: grant, ObservedIn: s.trace, TriggeredBy: s.trigger})
 	}
@@ -195,7 +240,7 @@ func FromDir(appRoot, dir string, key []byte) (*Draft, error) {
 	}
 	for n, where := range visibleOnly {
 		if !used[n] {
-			d.Notes = append(d.Notes, fmt.Sprintf("機密 %s 只出現在 %s 而非標頭，無法由閘門注入；初稿未授權，若確實需要只能改為 app-visible 例外", n, where))
+			d.Notes = append(d.Notes, fmt.Sprintf("⚠ 機密 %s 只出現在 %s，不在請求標頭中。核心目前只能把機密注入請求標頭，這個機密在此版核心中無法授權（改成 app-visible 也不行：檢查器要求 bind.inject.header，證據也必須是標頭）；初稿未授權。需要修改應用改用標頭傳送金鑰，或等核心支援——請交給人決定", n, where))
 		}
 	}
 	for _, k := range sortedKeysStr(blocked) {
@@ -208,10 +253,80 @@ func FromDir(appRoot, dir string, key []byte) (*Draft, error) {
 	if err != nil {
 		return nil, err
 	}
-	header := "# 由 warp draft 依側錄紀錄產生的宣告初稿。\n# 請逐條收緊、填寫每條授權的 purpose（一句人話），再執行 warp lint。\n"
+	header := "# 由 warp draft 依側錄紀錄產生的宣告初稿。\n# 請逐條收緊、填寫每條授權的 purpose（一句人話），再執行 warp lint。\n" +
+		"# ⚠ app.entry 取自最後一次側錄的指令（含參數），app.kind 暫填 cli：請確認或改正。\n"
 	d.Manifest = m
 	d.YAML = append([]byte(header), y...)
 	return d, nil
+}
+
+func contains(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
+func sortedInts(m map[int][]string) []int {
+	var out []int
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Ints(out)
+	return out
+}
+
+// appVersion reads the app's own version from package.json or
+// pyproject.toml at the app root ("0.1.0" and no source if none).
+func appVersion(root string) (version, source string) {
+	if b, err := os.ReadFile(filepath.Join(root, "package.json")); err == nil {
+		var pj struct {
+			Version string `json:"version"`
+		}
+		if json.Unmarshal(b, &pj) == nil && validVersion(pj.Version) {
+			return pj.Version, "package.json"
+		}
+	}
+	if b, err := os.ReadFile(filepath.Join(root, "pyproject.toml")); err == nil {
+		section := ""
+		for _, line := range strings.Split(string(b), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "[") {
+				section = strings.Trim(line, "[] ")
+				continue
+			}
+			if section != "project" && section != "tool.poetry" {
+				continue
+			}
+			k, v, ok := strings.Cut(line, "=")
+			if !ok || strings.TrimSpace(k) != "version" {
+				continue
+			}
+			v = strings.TrimSpace(v)
+			if i := strings.Index(v, "#"); i > 0 && (strings.HasPrefix(v, `"`) || strings.HasPrefix(v, "'")) {
+				v = strings.TrimSpace(v[:i])
+			}
+			v = strings.Trim(v, `"'`)
+			if validVersion(v) {
+				return v, "pyproject.toml"
+			}
+		}
+	}
+	return "0.1.0", ""
+}
+
+func validVersion(v string) bool {
+	if v == "" || len(v) > 64 {
+		return false
+	}
+	for _, r := range v {
+		if !(r == '.' || r == '-' || r == '+' || r == '_' || (r >= '0' && r <= '9') || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')) {
+			return false
+		}
+	}
+	return true
 }
 
 func sortedKeys(m map[string]*seen) []string {
