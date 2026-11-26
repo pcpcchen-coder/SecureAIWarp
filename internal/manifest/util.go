@@ -83,7 +83,7 @@ const (
 	VarAppCache = "${APP_CACHE}"
 )
 
-var pickRe = regexp.MustCompile(`^\$\{USER_PICK:([a-z][a-z0-9_-]{0,31})\}$`)
+var pickRe = regexp.MustCompile(`^\$\{USER_PICK:([a-z][a-z0-9_-]{0,31})\}$`) // keep in sync with pickNameRe
 
 // PathVar classifies a files[].path value. It returns the pick name for
 // USER_PICK paths. Only variable paths are supported in phase 1.
@@ -209,4 +209,71 @@ func hashFile(p string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+var pickNameRe = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
+
+// PickNameRule describes valid USER_PICK names for error messages.
+const PickNameRule = "名稱必須以小寫英文字母開頭，只含小寫英數字、- 與 _，最多 32 字元（例如 notes、photo-in）"
+
+// ValidPickName reports whether name is a valid USER_PICK name.
+func ValidPickName(name string) bool { return pickNameRe.MatchString(name) }
+
+// PickEnvName is the environment variable that tells the app where a
+// picked folder is mounted inside the shell (WARP_PICK_<NAME>, upper case,
+// "-" replaced by "_").
+func PickEnvName(name string) string {
+	return "WARP_PICK_" + strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
+}
+
+// argVarRe finds the fixed placeholders that may appear in a command line.
+// Anything else (including other ${...} text) is passed through untouched.
+var argVarRe = regexp.MustCompile(`\$\{(APP_DATA|APP_CACHE|USER_PICK:[^}]*)\}`)
+
+// ArgVars lists the placeholders used in argv, as they would appear in
+// files[].path (e.g. "${USER_PICK:notes}"), in order of first use. Invalid
+// USER_PICK names are returned too so callers can report them.
+func ArgVars(argv []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, a := range argv {
+		for _, m := range argVarRe.FindAllString(a, -1) {
+			if !seen[m] {
+				seen[m] = true
+				out = append(out, m)
+			}
+		}
+	}
+	return out
+}
+
+// ExpandArgs replaces ${APP_DATA}, ${APP_CACHE} and ${USER_PICK:<name>} in
+// every argument by their shell paths (a literal substring replacement; no
+// other expansion of any kind). paths maps a placeholder to its shell path;
+// a placeholder that is not in paths is an error, so a command can never
+// run with a placeholder it was not given.
+func ExpandArgs(argv []string, paths map[string]string) ([]string, error) {
+	out := make([]string, len(argv))
+	for i, a := range argv {
+		var missing string
+		out[i] = argVarRe.ReplaceAllStringFunc(a, func(m string) string {
+			if p, ok := paths[m]; ok {
+				return p
+			}
+			if missing == "" {
+				missing = m
+			}
+			return m
+		})
+		if missing != "" {
+			if strings.HasPrefix(missing, "${USER_PICK:") {
+				if _, _, ok := PathVar(missing); !ok {
+					return nil, fmt.Errorf("指令中的 %s 不是有效的選定資料夾佔位字：%s", missing, PickNameRule)
+				}
+				return nil, fmt.Errorf("指令引用了 %s，但這次執行沒有掛載這個資料夾（record 請加 --pick 名稱=資料夾；enforce 只能使用宣告中的 USER_PICK）", missing)
+			}
+			return nil, fmt.Errorf("指令引用了 %s，但這次執行沒有掛載它（enforce 只掛載宣告在 files 中的路徑）", missing)
+		}
+	}
+	return out, nil
 }

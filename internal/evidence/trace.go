@@ -178,7 +178,12 @@ func LoadUnverified(path string) (*Trace, error) {
 
 var traceName = regexp.MustCompile(`^trace-(\d{4,})\.json$`)
 
-// NextPath returns the next free trace-NNNN.json path in dir.
+// seqFile keeps the highest trace number ever handed out in a directory, so
+// that numbers are not reused after traces are moved out of it.
+const seqFile = ".trace-seq"
+
+// NextPath returns the next trace-NNNN.json path in dir: one more than the
+// highest number present or ever handed out there.
 func NextPath(dir string) (string, string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", "", err
@@ -195,7 +200,15 @@ func NextPath(dir string) (string, string, error) {
 			}
 		}
 	}
+	if b, err := os.ReadFile(filepath.Join(dir, seqFile)); err == nil {
+		if n, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && n > max {
+			max = n
+		}
+	}
 	id := fmt.Sprintf("trace-%04d", max+1)
+	if err := os.WriteFile(filepath.Join(dir, seqFile), []byte(strconv.Itoa(max+1)+"\n"), 0o644); err != nil {
+		return "", "", err
+	}
 	return filepath.Join(dir, id+".json"), id, nil
 }
 

@@ -260,3 +260,39 @@ func TestEvidenceBinding(t *testing.T) {
 		t.Fatalf("a trace recorded on different app content must be rejected")
 	}
 }
+
+func TestEntryPlaceholders(t *testing.T) {
+	root := fixture(t)
+	m := base(t, root)
+	m.App.Entry = []string{"python3", "app.py", "--in", "${USER_PICK:docs}", "--db=${APP_DATA}/db.sqlite"}
+	if r := lint(t, root, m); hasRule(r, LevelError, "entry-var") {
+		t.Fatalf("declared placeholders must be accepted: %+v", r.Findings)
+	}
+	for _, bad := range []string{"${USER_PICK:other}", "${USER_PICK:Docs}", "${APP_CACHE}"} {
+		m.App.Entry = []string{"python3", "app.py", bad}
+		if r := lint(t, root, m); !hasRule(r, LevelError, "entry-var") {
+			t.Errorf("%s in app.entry must be rejected", bad)
+		}
+	}
+	m.App.Entry = []string{"sh", "-c", "echo ${HOME} $WARP_PICK_DOCS"}
+	if r := lint(t, root, m); hasRule(r, LevelError, "entry-var") {
+		t.Errorf("other ${...} text is not a placeholder")
+	}
+}
+
+func TestExpandArgs(t *testing.T) {
+	paths := map[string]string{"${APP_DATA}": "/warp/data", "${USER_PICK:docs}": "/warp/pick/docs"}
+	got, err := ExpandArgs([]string{"x", "${USER_PICK:docs}", "--db=${APP_DATA}/a ${APP_DATA}", "${HOME}", "$APP_DATA"}, paths)
+	want := []string{"x", "/warp/pick/docs", "--db=/warp/data/a /warp/data", "${HOME}", "$APP_DATA"}
+	if err != nil || strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("got %q, %v", got, err)
+	}
+	for _, bad := range []string{"${USER_PICK:other}", "${USER_PICK:BAD}", "${APP_CACHE}"} {
+		if _, err := ExpandArgs([]string{bad}, paths); err == nil {
+			t.Errorf("%s must be refused", bad)
+		}
+	}
+	if !ValidPickName("photo-in") || ValidPickName("NOTES") || ValidPickName("1x") || PickEnvName("photo-in") != "WARP_PICK_PHOTO_IN" {
+		t.Errorf("pick name rules")
+	}
+}

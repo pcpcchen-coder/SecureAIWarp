@@ -57,6 +57,51 @@ def http(url, data=None, headers=None, timeout=8):
         return r.status, r.read().decode("utf-8", "replace")
 
 
+def via_gate_get(url):
+    """GET url through the egress gate explicitly (ignores NO_PROXY).
+    Without a proxy (outside any shell) it is a plain GET."""
+    if not os.environ.get("HTTP_PROXY"):
+        return http(url)[1]
+    proxy = os.environ["HTTP_PROXY"].rsplit("/", 1)[-1]
+    host, port = proxy.rsplit(":", 1)
+    hostport = url.split("://", 1)[1].split("/", 1)[0]
+    s = socket.create_connection((host, int(port)), timeout=6)
+    s.sendall(("GET %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n" % (url, hostport)).encode())
+    out = b""
+    while True:
+        b = s.recv(4096)
+        if not b:
+            break
+        out += b
+    s.close()
+    return out.decode("utf-8", "replace")
+
+
+def shell_loopback_control():
+    """A server the app starts on loopback inside the shell is reachable
+    with the default (environment) proxy settings."""
+    import http.server as hs  # do not shadow the http() helper
+    import threading
+
+    class H(hs.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"shell-local")
+
+        def log_message(self, *args):
+            pass
+
+    srv = hs.HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        st, text = http("http://127.0.0.1:%d/" % srv.server_address[1])
+        st2, text2 = http("http://localhost:%d/" % srv.server_address[1])
+        return st == 200 and text == "shell-local" and st2 == 200 and text2 == "shell-local", text
+    finally:
+        srv.shutdown()
+
+
 def attempt(name, fn):
     try:
         ok, detail = fn()
@@ -163,7 +208,16 @@ def attack(a):
 
     # 4. host-local, LAN and metadata addresses
     attempt("cloud_metadata", lambda: (http("http://169.254.169.254/latest/meta-data/")[0] == 200, "reached"))
-    attempt("host_loopback_service", lambda: (a.host_marker in http(a.host_service)[1], "reached"))
+    # The shell's NO_PROXY sends loopback names straight to the shell's own
+    # loopback (its own network namespace), so try the host service both
+    # through the gate explicitly and the way an ordinary client would.
+    attempt("host_loopback_service", lambda: (a.host_marker in via_gate_get(a.host_service), "reached"))
+    attempt("host_loopback_service_no_proxy", lambda: (a.host_marker in http(a.host_service)[1], "reached"))
+    try:
+        ok, detail = shell_loopback_control()
+    except Exception as e:
+        ok, detail = False, "%s: %s" % (type(e).__name__, e)
+    print(json.dumps({"control": "shell_loopback", "ok": ok, "detail": str(detail)[:200]}), flush=True)
     attempt("lan_by_name", lambda: (http("http://lan.notes.example/")[0] == 200, "reached"))
     attempt("lan_by_ip", lambda: (http("http://192.168.1.1/")[0] == 200, "reached"))
     attempt("rebinding_declared_host", lambda: (http("https://status.notes.example/ping")[0] == 200, "reached"))

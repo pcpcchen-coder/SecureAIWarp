@@ -1,6 +1,8 @@
 package evidence
 
 import (
+	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -59,5 +61,22 @@ func TestCommandString(t *testing.T) {
 		if got := CommandString(c.in); got != c.want {
 			t.Errorf("%q: got %s, want %s", c.in, got, c.want)
 		}
+	}
+}
+
+func TestNextPathDoesNotReuseNumbers(t *testing.T) {
+	dir := t.TempDir()
+	for want := 1; want <= 3; want++ {
+		p, id, err := NextPath(dir)
+		if err != nil || id != fmt.Sprintf("trace-%04d", want) {
+			t.Fatalf("got %s %v, want %d", id, err, want)
+		}
+		os.WriteFile(p, []byte("{}"), 0o644)
+	}
+	// Moving the newest traces away must not hand their numbers out again.
+	os.Remove(filepath.Join(dir, "trace-0003.json"))
+	os.Remove(filepath.Join(dir, "trace-0002.json"))
+	if _, id, _ := NextPath(dir); id != "trace-0004" {
+		t.Fatalf("number reused: %s", id)
 	}
 }

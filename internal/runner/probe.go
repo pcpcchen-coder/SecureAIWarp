@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pcpcchen-coder/SecureAIWarp/internal/gate"
@@ -92,6 +93,28 @@ func Probe(opt Options) (*report.Probe, error) {
 		Self:          ShellBin,
 		IngressMarker: marker,
 	}
+	// A service on the host's loopback. The shell's NO_PROXY sends loopback
+	// names straight to the shell's own loopback, so a direct connection is
+	// exactly what a NO_PROXY-honouring client does: it must never arrive
+	// here (separate network namespace).
+	var loopHits atomic.Int64
+	loopLn, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		return nil, err
+	}
+	defer loopLn.Close()
+	go func() {
+		for {
+			c, err := loopLn.Accept()
+			if err != nil {
+				return
+			}
+			loopHits.Add(1)
+			c.Close()
+		}
+	}()
+	loopPort := strconv.Itoa(loopLn.Addr().(*net.TCPAddr).Port)
+	a.DirectTargets = append(a.DirectTargets, "127.0.0.1:"+loopPort, "localhost:"+loopPort)
 	for ip := range netpolicy.HostAddrs() {
 		if ip.IsLoopback() {
 			continue
@@ -232,6 +255,7 @@ func Probe(opt Options) (*report.Probe, error) {
 			os.Remove(p)
 		}
 	}
+	add("host.loopback-unreached", "對外", "主機本機 127.0.0.1:"+loopPort+" 的服務沒有收到殼內的連線", blockedIf(loopHits.Load() == 0), fmt.Sprintf("收到 %d 次連線", loopHits.Load()))
 	add("host.no-writes", "檔案", "主機上沒有出現殼內寫入的檔案", blockedIf(len(appeared) == 0), strings.Join(appeared, ", "))
 	if v, err := ledger.Verify(out.LedgerPath); err != nil {
 		add("ledger.chain", "帳本", "稽核帳本雜湊鏈完整", report.Penetrated, err.Error())

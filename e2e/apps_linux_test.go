@@ -176,7 +176,7 @@ func testNotesAppLifecycle(t *testing.T, w *who) {
 	}
 	for _, id := range []string{"net.connect:169.254.169.254:80", "net.connect:127.0.0.1:22", "net.connect:api.notes.example:22",
 		"ingress.no-token:8080", "ingress.rebind-host:8080", "ingress.control:8080", "secret.env:NOTES_API_KEY",
-		"res.memory", "res.pids", "res.disk", "fs.nested-userns", "host.decoy-intact"} {
+		"res.memory", "res.pids", "res.disk", "fs.nested-userns", "host.decoy-intact", "host.loopback-unreached"} {
 		if ids[id] != "blocked" {
 			t.Errorf("probe %s: status %q", id, ids[id])
 		}
@@ -314,6 +314,11 @@ func testEvilAppIsContained(t *testing.T, w *who) {
 	if !strings.Contains(r.stdout, `{"control": "tunnel", "ok": true`) {
 		t.Errorf("positive control failed: an allowed, non-inspected tunnel must work")
 	}
+	// NO_PROXY covers loopback: a server the app starts on loopback inside
+	// the shell is reachable with ordinary client settings ...
+	if !strings.Contains(r.stdout, `{"control": "shell_loopback", "ok": true`) {
+		t.Errorf("positive control failed: the shell's own loopback must be reachable without the gate")
+	}
 	attacks := map[string]bool{}
 	for _, line := range strings.Split(r.stdout, "\n") {
 		var a struct {
@@ -331,7 +336,7 @@ func testEvilAppIsContained(t *testing.T, w *who) {
 	for _, name := range []string{"read_decoy_credential", "read_host_home_ssh", "list_host_dir", "exfil_https_undeclared",
 		"exfil_http_undeclared", "exfil_declared_host_other_port", "exfil_direct_socket", "exfil_dns_lookup",
 		"exfil_domain_fronting", "secret_env_is_real", "secret_reflected_by_api", "secret_to_undeclared_host", "secret_proc_environ",
-		"read_init_environ", "cloud_metadata", "host_loopback_service", "lan_by_name", "lan_by_ip",
+		"read_init_environ", "cloud_metadata", "host_loopback_service", "host_loopback_service_no_proxy", "lan_by_name", "lan_by_ip",
 		"rebinding_declared_host", "host_loopback_direct", "write_outside", "write_app_dir", "delete_outside", "rmtree_outside",
 		"inherited_descriptor", "host_sysctl_write", "host_session_keyring"} {
 		if _, ok := attacks[name]; !ok {
@@ -354,6 +359,8 @@ func testEvilAppIsContained(t *testing.T, w *who) {
 			t.Errorf("unexpected upstream request: %+v", e)
 		}
 	}
+	// ... while the host's loopback service stays unreachable, both through
+	// the gate and directly (host_loopback_service_no_proxy, host_loopback_direct).
 	if n := h.loopHits.Load() - loopBefore; n != 0 {
 		t.Errorf("host loopback service was reached %d times", n)
 	}
@@ -434,7 +441,7 @@ func TestEvilAppControlWithoutShell(t *testing.T) {
 			}
 		}
 		for _, name := range []string{"read_decoy_credential", "read_host_home_ssh", "list_host_dir", "write_outside",
-			"delete_outside", "host_loopback_service"} {
+			"delete_outside", "host_loopback_service", "host_loopback_service_no_proxy"} {
 			if !got[name] {
 				t.Errorf("control: %s should succeed without the shell (fixtures not exploitable?)\n%s", name, out)
 			}
@@ -557,5 +564,85 @@ func TestEvidenceForgeryAndAbuse(t *testing.T) {
 			t.Fatalf("genuine evidence must replay")
 		}
 		mustContain(t, "replay abused", r.stdout, "重放指令："+cmd, "✔ 重現  network.egress[1]")
+	})
+}
+
+// TestTunnelHTTPAndPlaceholders covers plain HTTP inside a CONNECT tunnel
+// in record mode (what Node's fetch does for http:// URLs) and the
+// expansion of path placeholders in the command and in app.entry.
+func TestTunnelHTTPAndPlaceholders(t *testing.T) {
+	forEachIdentity(t, func(t *testing.T, w *who) {
+		base := newBase(t)
+		app := filepath.Join(base, "tool")
+		writeFiles(t, app, map[string]string{"tool.py": "import sys\nprint(open(sys.argv[1] + '/a.txt').read().strip())\n"})
+		synthetic := filepath.Join(base, "synthetic")
+		writeFiles(t, synthetic, map[string]string{"a.txt": "synthetic-content\n"})
+		real := filepath.Join(base, "real")
+		writeFiles(t, real, map[string]string{"a.txt": "real-content\n"})
+		w.own(t, base)
+		env := warpEnv(w)
+		runWarp(t, w, env, "init", "-C", app)
+
+		// 1. Plain HTTP through CONNECT while the gate inspects (record).
+		tunnel := "import socket\ns = socket.create_connection(('127.0.0.1', 3128))\n" +
+			"s.sendall(b'CONNECT api.notes.example:80 HTTP/1.1\\r\\nHost: api.notes.example:80\\r\\n\\r\\n')\n" +
+			"head = s.recv(4096)\nassert b' 200 ' in head.split(b'\\r\\n')[0], head\n" +
+			"s.sendall(b'GET /ping HTTP/1.1\\r\\nHost: api.notes.example\\r\\nConnection: close\\r\\n\\r\\n')\n" +
+			"out = b''\nwhile True:\n    b = s.recv(4096)\n    if not b: break\n    out += b\nprint(out.decode().split('\\r\\n\\r\\n', 1)[1])\n"
+		r := runWarp(t, w, env, "record", "-C", app, "--", "python3", "-c", tunnel)
+		if r.code != 0 || !strings.Contains(r.stdout, "pong") || strings.Contains(r.stderr, "阻擋") {
+			t.Fatalf("plain HTTP inside CONNECT must work in record mode")
+		}
+		for _, e := range ledgerEntries(t, w, app) {
+			if e["decision"] == "deny" {
+				t.Errorf("unexpected deny: %v", e)
+			}
+		}
+		os.Rename(filepath.Join(app, ".warp", "evidence", "trace-0001.json"), filepath.Join(base, "moved-trace.json"))
+
+		// 2. Pick names must follow the documented rule.
+		if r := runWarp(t, w, env, "record", "-C", app, "--pick", "NOTES="+synthetic, "--", "python3", "tool.py", "x"); r.code == 0 || !strings.Contains(r.stderr, "小寫") {
+			t.Fatalf("an upper-case pick name must be refused with the rule")
+		}
+
+		// 3. ${USER_PICK:notes} in the command is expanded for the app and
+		// kept as written in the trace; the number of a moved trace is not reused.
+		r = runWarp(t, w, env, "record", "-C", app, "--pick", "notes="+synthetic, "--", "python3", "tool.py", "${USER_PICK:notes}")
+		if r.code != 0 || !strings.Contains(r.stdout, "synthetic-content") {
+			t.Fatalf("placeholder in the record command was not expanded")
+		}
+		tp := filepath.Join(app, ".warp", "evidence", "trace-0002.json")
+		tr, err := evidence.LoadUnverified(tp)
+		if err != nil {
+			t.Fatalf("expected trace-0002 (no number reuse): %v", err)
+		}
+		if evidence.CommandString(tr.Command) != "python3 tool.py '${USER_PICK:notes}'" {
+			t.Fatalf("trace must keep the placeholder: %q", tr.Command)
+		}
+		if r := runWarp(t, w, env, "draft", "-C", app); r.code != 0 {
+			t.Fatalf("draft failed")
+		}
+		mf := filepath.Join(app, ".warp", "warp.yaml")
+		s := fillPurposes(t, mf)
+		mustContain(t, "draft", s, "${USER_PICK:notes}", "triggered_by: python3 tool.py '${USER_PICK:notes}'")
+		if r := runWarp(t, w, env, "lint", "-C", app); r.code != 0 {
+			t.Fatalf("lint failed:\n%s", s)
+		}
+		// 4. app.entry (from the draft) carries the placeholder; enforce
+		// expands it to the picked folder.
+		r = runWarp(t, w, env, "enforce", "-C", app, "--pick", "notes="+real)
+		if r.code != 0 || !strings.Contains(r.stdout, "real-content") {
+			t.Fatalf("placeholder in app.entry was not expanded under enforce")
+		}
+		var rep struct{ Command []string }
+		json.Unmarshal(mustRead(t, filepath.Join(app, ".warp", "reports", "enforce-last.json")), &rep)
+		if strings.Join(rep.Command, " ") != "python3 tool.py ${USER_PICK:notes}" {
+			t.Errorf("the enforce report must keep the command as declared: %q", rep.Command)
+		}
+		// An undeclared pick in app.entry is a lint error and is never run.
+		os.WriteFile(mf, []byte(strings.Replace(s, "${USER_PICK:notes}\n", "${USER_PICK:other}\n", 1)), 0o644)
+		if r := runWarp(t, w, env, "lint", "-C", app); r.code == 0 || !strings.Contains(r.stdout, "entry-var") {
+			t.Fatalf("lint must reject an undeclared pick in app.entry")
+		}
 	})
 }

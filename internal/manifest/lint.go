@@ -164,6 +164,21 @@ func (l *linter) checkTop() {
 	if len(m.App.Entry) == 0 || m.App.Entry[0] == "" {
 		l.errf("format", "app.entry", "app.entry 必須是非空的指令陣列")
 	}
+	// Placeholders in app.entry are expanded by the core at run time; they
+	// must name paths that enforce mode will actually mount.
+	declared := map[string]bool{}
+	for _, f := range m.Files {
+		declared[f.Path] = true
+	}
+	for _, v := range ArgVars(m.App.Entry) {
+		_, _, ok := PathVar(v)
+		switch {
+		case !ok:
+			l.errf("entry-var", "app.entry", "%s 不是有效的佔位字（USER_PICK 的%s）", v, PickNameRule)
+		case !declared[v]:
+			l.errf("entry-var", "app.entry", "app.entry 使用了 %s，但 files 中沒有宣告它；強制模式不會掛載未宣告的路徑", v)
+		}
+	}
 	if !digestRe.MatchString(m.App.Digest) {
 		l.errf("app-digest", "app.digest", "app.digest 必須是 sha256:<64 位十六進位>")
 	}

@@ -115,7 +115,8 @@ type session struct {
 	watcher    *watch.Watcher
 	usage      *gate.Usage
 	digest     string
-	command    []string
+	command    []string // as given (placeholders unexpanded): traces, ledger, reports
+	argv       []string // what actually runs: placeholders replaced by shell paths
 	cleanups   []func()
 	extraBin   bool
 
@@ -269,6 +270,9 @@ func (s *session) planMounts() error {
 		protect = append(protect, sr)
 	}
 	addPick := func(name, host string, rw bool) error {
+		if !manifest.ValidPickName(name) {
+			return fmt.Errorf("選定資料夾的名稱 %q 無效：%s。殼內的環境變數是 %s、路徑是 %s/<名稱>", name, manifest.PickNameRule, manifest.PickEnvName("<名稱>"), ShellPickBase)
+		}
 		p, err := realAbs(host)
 		if err != nil {
 			return fmt.Errorf("USER_PICK %s：%w", name, err)
@@ -345,7 +349,10 @@ func (s *session) planMounts() error {
 				}
 			}
 		}
-		for n := range s.opt.Picks {
+		for _, n := range sortedKeys(s.opt.Picks) {
+			if !manifest.ValidPickName(n) {
+				return fmt.Errorf("選定資料夾的名稱 %q 無效：%s", n, manifest.PickNameRule)
+			}
 			if !declared[n] {
 				return fmt.Errorf("--pick %s 不在宣告中；只能掛載宣告過的資料夾", n)
 			}
@@ -456,6 +463,22 @@ var etcCopy = []string{"/etc/ld.so.cache", "/etc/ld.so.conf", "/etc/ld.so.conf.d
 	"/etc/timezone", "/etc/alternatives", "/etc/ssl/openssl.cnf", "/etc/mime.types", "/etc/protocols",
 	"/etc/services", "/etc/os-release", "/etc/gai.conf"}
 
+// shellNoProxy lists the shell-local loopback names (see buildConfig).
+const shellNoProxy = "localhost,127.0.0.1,::1"
+
+// nodeUsesProxy reports whether Node.js in the shell should be told to use
+// HTTP(S)_PROXY (NODE_USE_ENV_PROXY=1, Node 22+). Node ignores the proxy
+// variables otherwise, but the setting makes every Node process print an
+// experimental-feature warning on stderr, so it is only set when the app may
+// use the network at all: always in record mode, and in enforce/probe mode
+// only when the manifest declares network.egress.
+func (s *session) nodeUsesProxy() bool {
+	if s.opt.Mode == ModeRecord {
+		return true
+	}
+	return s.m != nil && len(s.m.Network.Egress) > 0
+}
+
 var shellSystemDirs = []string{"/usr", "/bin", "/sbin", "/lib", "/lib32", "/lib64", "/libx32"}
 
 func (s *session) buildConfig(secretEnv map[string]string) error {
@@ -513,8 +536,13 @@ func (s *session) buildConfig(secretEnv map[string]string) error {
 		"HTTPS_PROXY":             "http://" + ProxyAddr,
 		"http_proxy":              "http://" + ProxyAddr,
 		"https_proxy":             "http://" + ProxyAddr,
-		"NO_PROXY":                "",
-		"no_proxy":                "",
+		// The shell has its own network namespace whose loopback holds only
+		// the shell's own processes (and the gate's entry on 3128): the
+		// host's loopback is unreachable from here. Servers an app or its
+		// tests start on loopback inside the shell are therefore reached
+		// directly; the gate itself still refuses any loopback target.
+		"NO_PROXY":                shellNoProxy,
+		"no_proxy":                shellNoProxy,
 		"SSL_CERT_FILE":           bundlePath,
 		"REQUESTS_CA_BUNDLE":      bundlePath,
 		"CURL_CA_BUNDLE":          bundlePath,
@@ -525,6 +553,9 @@ func (s *session) buildConfig(secretEnv map[string]string) error {
 	}
 	if t := os.Getenv("TERM"); t != "" {
 		env["TERM"] = t
+	}
+	if s.nodeUsesProxy() {
+		env["NODE_USE_ENV_PROXY"] = "1"
 	}
 	var binds []sandbox.Bind
 	for _, m := range s.mounts {
@@ -537,8 +568,7 @@ func (s *session) buildConfig(secretEnv map[string]string) error {
 			env["APP_CACHE"] = ShellCache
 			env["XDG_CACHE_HOME"] = ShellCache
 		case strings.HasPrefix(m.shell, ShellPickBase+"/"):
-			n := strings.TrimPrefix(m.shell, ShellPickBase+"/")
-			env["WARP_PICK_"+strings.ToUpper(strings.ReplaceAll(n, "-", "_"))] = m.shell
+			env[manifest.PickEnvName(strings.TrimPrefix(m.shell, ShellPickBase+"/"))] = m.shell
 		}
 	}
 	if s.extraBin {
@@ -619,7 +649,7 @@ func (s *session) buildConfig(secretEnv map[string]string) error {
 		Generated:  gen,
 		Binds:      binds,
 		Env:        envList,
-		Argv:       s.command,
+		Argv:       s.argv,
 		Cwd:        cwd,
 		ProxyPort:  manifest.ReservedShellPort,
 		TmpSize:    res.disk,
@@ -717,6 +747,9 @@ func (s *session) start() error {
 		if err := s.plan(); err != nil {
 			return err
 		}
+	}
+	if s.argv, err = s.expandCommand(); err != nil {
+		return err
 	}
 	switch s.opt.Mode {
 	case ModeRecord:
@@ -827,6 +860,19 @@ func (s *session) start() error {
 		return err
 	}
 	return nil
+}
+
+// expandCommand replaces the fixed path placeholders in the command with
+// the shell paths of this run's mounts (see manifest.ExpandArgs).
+func (s *session) expandCommand() ([]string, error) {
+	paths := map[string]string{}
+	for _, m := range s.mounts {
+		paths[m.varName] = m.shell
+	}
+	if s.opt.Mode == ModeProbe {
+		return s.command, nil // the probe agent's own command
+	}
+	return manifest.ExpandArgs(s.command, paths)
 }
 
 func (s *session) forwardSignals() func() {
@@ -942,7 +988,16 @@ func (s *session) summary(res *Result) {
 		s.errf("本次執行共阻擋 %d 次越界行為（詳見稽核帳本 %s）", len(res.Denied), res.LedgerPath)
 	}
 	if res.TracePath != "" {
-		rel, _ := filepath.Rel(s.appRoot, res.TracePath)
-		s.errf("側錄紀錄已寫入 %s", rel)
+		switch rel, err := filepath.Rel(s.appRoot, res.TracePath); {
+		case s.opt.TraceDir != "":
+			s.errf("重放的側錄紀錄（暫存，重放結束後刪除）：%s", res.TracePath)
+		case err == nil && !strings.HasPrefix(rel, ".."):
+			s.errf("側錄紀錄已寫入 %s", rel)
+		default:
+			s.errf("側錄紀錄已寫入 %s", res.TracePath)
+		}
+		if res.ExitCode != 0 {
+			s.errf("注意：指令以結束碼 %d 結束。warp draft 預設不採用失敗的側錄當證據；不需要的側錄檔可移出 .warp/evidence/（編號不會重用）", res.ExitCode)
+		}
 	}
 }

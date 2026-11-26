@@ -60,7 +60,7 @@ const usage = `SecureAIWarp 核心 warp ` + Version + `
 
   init                         建立 .warp/ 工作目錄
   record [選項] -- <指令>      側錄模式：在拋棄式殼內執行並記錄各通道行為（使用誘餌機密）
-  draft [--from 目錄] [-o 檔]  由側錄紀錄產生宣告初稿
+  draft [--from 目錄] [-o 檔]  由側錄紀錄產生宣告初稿（預設略過結束碼非 0 的側錄；--include-failed 改為採用）
   lint [-f 宣告]               檢查宣告（硬性規則、軟性規則、證據）
   enforce [選項] [-- <指令>]   強制模式：只放行宣告內的行為
   probe [-f 宣告]              探測模式：在強制模式的殼內主動嘗試越界並回報
@@ -73,8 +73,14 @@ const usage = `SecureAIWarp 核心 warp ` + Version + `
   seal                         （尚未實作）封籤
 
 共用選項：-C <目錄> 應用根目錄（預設為目前目錄）；-f <檔案> 宣告檔（預設 .warp/warp.yaml）
-record / enforce 選項：--pick 名稱=資料夾（可重複）
+record / enforce 選項：--pick 名稱=資料夾（可重複；名稱為小寫英數字、- 或 _，以字母開頭）
 record 專用：--pick-rw 名稱=資料夾、--secret 名稱（可重複）
+  指令（-- 之後或 app.entry）中的 ${APP_DATA}、${APP_CACHE}、${USER_PICK:名稱} 會被替換為殼內路徑
+  （/warp/data、/warp/cache、/warp/pick/名稱）；側錄檔與 triggered_by 保留原樣。
+evidence replay 選項：--pick 名稱=合成資料夾（可重複）、--timeout 每個指令的時間上限（預設 60s）
+ledger show 選項：--denied 只列被阻擋的項目、--run 執行編號 只列一次執行（不指定時列出所有執行，
+  包括 probe、record、enforce；輸出最後會列出最近的執行編號）
+各子指令加 -h 可看完整選項。
 `
 
 type multiFlag []string
@@ -228,7 +234,15 @@ func parsePicks(list []string) (map[string]string, error) {
 		if i <= 0 || i == len(p)-1 {
 			return nil, fmt.Errorf("--pick 格式應為 名稱=資料夾：%q", p)
 		}
-		out[p[:i]] = p[i+1:]
+		name := p[:i]
+		if !manifest.ValidPickName(name) {
+			return nil, fmt.Errorf("--pick 的名稱 %q 無效：%s。宣告中寫 ${USER_PICK:%s}，殼內路徑是 /warp/pick/%s，環境變數是 %s（名稱轉大寫、- 換成 _）",
+				name, manifest.PickNameRule, "<名稱>", "<名稱>", manifest.PickEnvName("<名稱>"))
+		}
+		if _, dup := out[name]; dup {
+			return nil, fmt.Errorf("--pick %s 重複指定", name)
+		}
+		out[name] = p[i+1:]
 	}
 	return out, nil
 }
@@ -371,6 +385,7 @@ func cmdDraft(args []string) int {
 	c := newFlags("draft")
 	from := c.fs.String("from", "", "側錄紀錄目錄（預設 .warp/evidence）")
 	out := c.fs.String("o", "", "輸出檔（預設 .warp/warp.yaml；已存在時寫到 .warp/warp.draft.yaml）")
+	includeFailed := c.fs.Bool("include-failed", false, "也採用結束碼非 0 的側錄當證據（預設略過；被 Ctrl+C/SIGTERM 中斷的 130/143 一律採用）")
 	if err := c.fs.Parse(args); err != nil {
 		return exitUsage
 	}
@@ -388,7 +403,7 @@ func cmdDraft(args []string) int {
 	if err != nil {
 		return errorf("%v", err)
 	}
-	d, err := draft.FromDir(root, dir, key)
+	d, err := draft.FromDirWith(root, dir, key, draft.Options{IncludeFailed: *includeFailed})
 	if err != nil {
 		return errorf("%v", err)
 	}
@@ -452,7 +467,7 @@ func cmdDigest(args []string) int {
 
 func cmdEvidence(args []string) int {
 	if len(args) == 0 || args[0] != "replay" {
-		fmt.Fprintln(os.Stderr, "用法：warp evidence replay [-C 目錄] [-f 宣告] [--pick 名稱=合成資料夾] [--timeout 60s]")
+		fmt.Fprintln(os.Stderr, "用法：warp evidence replay [-C 目錄] [-f 宣告] [--pick 名稱=合成資料夾] [--timeout 60s]\n  --timeout：每個重放指令的時間上限（預設 60s，格式如 90s、5m）；到時會結束殼內程序，伺服器型指令請設短一點")
 		return exitUsage
 	}
 	c := newFlags("evidence replay")
@@ -487,12 +502,12 @@ func cmdEvidence(args []string) int {
 
 func cmdLedger(args []string) int {
 	if len(args) == 0 || (args[0] != "verify" && args[0] != "show") {
-		fmt.Fprintln(os.Stderr, "用法：warp ledger verify|show [-C 目錄] [--run 執行編號] [--expect 筆數:雜湊]")
+		fmt.Fprintln(os.Stderr, "用法：warp ledger verify [-C 目錄] [--expect 筆數:雜湊]\n      warp ledger show [-C 目錄] [--denied] [--run 執行編號]\n  show 不指定 --run 時會列出所有執行（probe、record、enforce 混在一起），輸出最後列出最近的執行編號")
 		return exitUsage
 	}
 	sub := args[0]
 	c := newFlags("ledger")
-	runID := c.fs.String("run", "", "只顯示此執行編號")
+	runID := c.fs.String("run", "", "show：只顯示此執行編號（不指定時列出所有執行，包括 probe；執行編號列在輸出最後）")
 	onlyDeny := c.fs.Bool("denied", false, "只顯示被阻擋的項目")
 	expect := c.fs.String("expect", "", "verify：另外比對先前抄下的尾端值（格式：筆數:雜湊）")
 	if err := c.fs.Parse(args[1:]); err != nil {
@@ -544,25 +559,62 @@ func cmdLedger(args []string) int {
 		return errorf("%v", err)
 	}
 	counts := map[string]int{}
+	shown := 0
+	type runInfo struct{ id, mode, time, cmd string }
+	var runs []runInfo
+	runSeen := map[string]bool{}
 	for _, e := range entries {
+		if !runSeen[e.Run] && e.Run != "" {
+			runSeen[e.Run] = true
+			runs = append(runs, runInfo{e.Run, e.Mode, e.Time, ""})
+		}
+		if e.Channel == "run" && e.Action == "start" && len(runs) > 0 && runs[len(runs)-1].id == e.Run {
+			runs[len(runs)-1].cmd = e.Target
+		}
 		if *runID != "" && e.Run != *runID {
 			continue
 		}
 		if *onlyDeny && e.Decision != "deny" {
 			continue
 		}
+		shown++
 		counts[e.Channel+"/"+e.Decision]++
 		fmt.Printf("%5d %s %-7s %-7s %-8s %-5s %s %s\n", e.Seq, e.Time, e.Mode, e.Channel, e.Action, e.Decision, e.Target, e.Detail)
 	}
-	var keys []string
-	for k := range counts {
-		keys = append(keys, k)
+	if *runID != "" && !runSeen[*runID] {
+		fmt.Printf("帳本中沒有執行編號 %s\n", *runID)
+		return exitFail
 	}
-	sort.Strings(keys)
-	fmt.Print("摘要：")
-	for _, k := range keys {
-		fmt.Printf(" %s=%d", k, counts[k])
+	scope := "所有執行（包括 probe、record、enforce）"
+	if *runID != "" {
+		scope = "執行 " + *runID
 	}
-	fmt.Println()
+	switch {
+	case shown == 0 && *onlyDeny:
+		fmt.Printf("沒有拒絕紀錄（範圍：%s）。\n", scope)
+	case shown == 0:
+		fmt.Printf("沒有紀錄（範圍：%s）。\n", scope)
+	default:
+		var keys []string
+		for k := range counts {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		fmt.Printf("摘要（範圍：%s）：", scope)
+		for _, k := range keys {
+			fmt.Printf(" %s=%d", k, counts[k])
+		}
+		fmt.Println()
+	}
+	if *runID == "" && len(runs) > 0 {
+		fmt.Println("最近的執行（用 --run <執行編號> 只看其中一次）：")
+		from := 0
+		if len(runs) > 10 {
+			from = len(runs) - 10
+		}
+		for _, r := range runs[from:] {
+			fmt.Printf("  %s  %-7s %s\n", r.id, r.mode, r.cmd)
+		}
+	}
 	return exitOK
 }
