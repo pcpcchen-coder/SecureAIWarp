@@ -1,0 +1,39 @@
+{
+  "app": "expenses",
+  "kind": "local-web",
+  "entry_point": "run.py (Flask, expenses.app:create_app)",
+  "start_command": ["env", "EXPENSES_DB=${APP_DATA}/expenses.db", ".venv/bin/python", "run.py", "--no-browser"],
+  "start_command_notes": [
+    "預設資料庫在 /app/data/expenses.db（應用目錄，殼內唯讀）；README 記載的 EXPENSES_DB 環境變數可改位置，因此指到 ${APP_DATA}",
+    "預設會用 webbrowser 開瀏覽器；殼內沒有瀏覽器，加 --no-browser（README 記載的參數）",
+    "預設埠 5000，只綁定 127.0.0.1"
+  ],
+  "files": [
+    {"path": "data/expenses.db（或 $EXPENSES_DB）", "op": "read/write", "note": "SQLite：花費紀錄 + 匯率快取表 rate_cache"},
+    {"path": ".env（應用目錄）", "op": "read", "note": "load_dotenv 讀取 EXCHANGERATE_API_KEY；殼內環境變數不帶入，.env 是另一個金鑰來源，但放進應用目錄會改變內容雜湊"}
+  ],
+  "hosts": [
+    {"host": "v6.exchangerate-api.com", "port": 443, "use": "GET /v6/<金鑰>/latest/TWD 取得匯率", "secret_location": "url-path"}
+  ],
+  "env_vars": ["EXCHANGERATE_API_KEY", "EXPENSES_DB"],
+  "secrets": [{"name": "EXCHANGERATE_API_KEY", "location": "URL 路徑", "known_limitation": "金鑰放在網址路徑（第 5 節）"}],
+  "model_sdks": [],
+  "ai_tools": [],
+  "hardcoded_keys": "未發現（.env.example 的值為空）",
+  "dependencies": {
+    "runtime": ["Flask==3.1.3"],
+    "dev": ["pytest==9.2.0"],
+    "installed_in_venv": ["blinker 1.9.0", "click 8.5.1", "flask 3.1.3", "iniconfig 2.3.1", "itsdangerous 2.2.0", "jinja2 3.1.6", "markupsafe 3.0.4", "packaging 26.4", "pip 26.2.2", "pluggy 1.7.0", "pygments 2.21.0", "pytest 9.2.0", "werkzeug 3.1.9"],
+    "suspicious": "未發現不明套件名稱；無法連官方套件庫核對版本是否存在"
+  },
+  "tests": {
+    "command": [".venv/bin/python", "-m", "pytest", "-q"],
+    "count": 23,
+    "covers": ["匯率換算、快取、過期、離線退回快取、錯誤回應、不支援幣別", "彙總", "資料持久化", "新增/驗證/CSRF/刪除/篩選/匯出 CSV/HTML 跳脫/.env 解析"],
+    "network": "conftest 封鎖所有 socket 連線；匯率以假 fetch 取代，不會連外",
+    "local_server": false,
+    "writes_app_dir": "只有 pytest 快取 .pytest_cache（警告，不影響結果）；資料庫用 tmp_path",
+    "not_covered": ["真實 HTTP 呼叫匯率 API（http_get_json 成功路徑）", "run.py 啟動與開瀏覽器"]
+  },
+  "known_limitations_hit": ["金鑰放在網址路徑（exchangerate-api v6 /v6/<key>/latest/TWD）"]
+}

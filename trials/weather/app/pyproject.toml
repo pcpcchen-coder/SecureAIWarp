@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "weather-cli"
+version = "0.1.0"
+description = "命令列天氣工具（使用 Open-Meteo 免費 API）"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[project.scripts]
+weather = "weather_cli.cli:main"
+
+[tool.setuptools]
+packages = ["weather_cli"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

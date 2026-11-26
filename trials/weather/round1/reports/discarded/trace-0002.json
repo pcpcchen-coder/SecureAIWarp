@@ -1,0 +1,19 @@
+{
+  "warp_trace": "0.1",
+  "id": "trace-0002",
+  "created_at": "2026-11-26T09:23:38Z",
+  "command": [
+    ".venv/bin/weather",
+    "台北"
+  ],
+  "app_digest": "sha256:a42d851586c7f29d84366a9a8324f8d9a1d65f131e15999d5bb152378631c176",
+  "exit_code": 126,
+  "events": [
+    {
+      "channel": "process",
+      "exe": ".venv/bin/weather 台北",
+      "count": 1
+    }
+  ],
+  "signature": "hmac-sha256:0546964fe81a6b4093dc84920b73a6acd6a5f4feb980ce992d8c384589ac14c3"
+}

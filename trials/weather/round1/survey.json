@@ -1,0 +1,36 @@
+{
+  "app": {"name": "weather-cli", "version": "0.1.0", "language": "python>=3.9"},
+  "scenario": ["A: 本機命令列工具（不含模型、不含 Agent 工具）"],
+  "scenario_note": "docs/06-scenarios.md 不在可讀範圍，A–I 的對應為推測：單純本機 CLI、呼叫免費公開 HTTP API。",
+  "audience": {"who": "特定對象（幾位朋友）", "how": "在自己的機器上執行", "model_cost": "使用者自備金鑰（本應用不使用模型或付費 API，實際無金鑰）"},
+  "entry_points": {
+    "console_script": "weather = weather_cli.cli:main",
+    "module": "python3 -m weather_cli",
+    "start_command": ".venv/bin/weather <城市>",
+    "test_command": ".venv/bin/python -m pytest -q"
+  },
+  "files": {
+    "favorites": {"default": "~/.config/weather-cli/favorites.json", "xdg": "$XDG_CONFIG_HOME/weather-cli/favorites.json", "override": "$WEATHER_HOME/favorites.json", "mode": "read-write"},
+    "cache": {"default": "~/.cache/weather-cli/http_cache.json", "xdg": "$XDG_CACHE_HOME/weather-cli/http_cache.json", "override": "$WEATHER_HOME/cache/http_cache.json", "mode": "read-write (tempfile in same dir + os.replace, unlink on --clear-cache)"}
+  },
+  "hosts": [
+    {"host": "geocoding-api.open-meteo.com", "method": "GET", "path": "/v1/search", "purpose": "城市名稱轉座標"},
+    {"host": "api.open-meteo.com", "method": "GET", "path": "/v1/forecast", "purpose": "天氣預報"}
+  ],
+  "env_vars": ["WEATHER_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "HOME", "HTTPS_PROXY (urllib 自動使用)"],
+  "secrets": [],
+  "hardcoded_secrets": "未發現",
+  "model_sdks": [],
+  "tool_definitions": [],
+  "listening_ports": [],
+  "subprocess_exec": "未發現",
+  "dependencies": {"runtime": [], "test": ["pytest>=7"], "supply_chain_findings": "無；只用標準函式庫，pytest 為官方套件"},
+  "tests": {
+    "command": ".venv/bin/python -m pytest -q",
+    "network": "不連網（fetch 被注入假資料、urlopen 被擋）",
+    "files": "寫在 pytest tmp_path（WEATHER_HOME 指到暫存目錄）",
+    "covers": ["地名查詢網址與別名", "預報網址參數", "錯誤處理", "快取 TTL / --no-cache / --clear-cache", "常用城市 add/list/remove", "輸出格式"],
+    "not_covered": ["真實 HTTPS 連線（http_get_json 只以 monkeypatch 測）", "預設路徑 ~/.config 與 ~/.cache 的實際讀寫"]
+  },
+  "suspicious_content": "未發現要求放寬權限或跳過檢查的文字"
+}

@@ -1,0 +1,58 @@
+{
+  "app": {
+    "name": "expenses",
+    "description": "旅行記帳本機網頁（Flask + SQLite），新增/列表/統計/匯出 CSV，外幣以 exchangerate-api.com v6 換算台幣",
+    "version": "未標示（run.py / 套件皆無版本號；User-Agent 寫 expenses-app/1.0）",
+    "scenario": ["本機網頁應用（在使用者自己的機器上執行，監聽 127.0.0.1）", "呼叫第三方 HTTP API（使用者自備金鑰）"],
+    "scenario_note": "手冊要求對照 docs/06-scenarios.md 的 A–I，但該文件不在可讀範圍內（使用者禁止讀 SecureAIWarp 目錄），因此以文字描述型態，未給代號。",
+    "language": "Python 3 (.venv 內 python3.13)",
+    "entry": "run.py",
+    "start_command": ".venv/bin/python run.py --no-browser",
+    "start_command_note": "不加 --no-browser 時會以 webbrowser.open 啟動瀏覽器（產生子行程），殼內不需要",
+    "test_command": ".venv/bin/python -m pytest -q"
+  },
+  "files": [
+    {"path": "data/expenses.db", "mode": "rw", "source": "expenses/app.py DEFAULT_DB = APP_DIR/data/expenses.db；啟動時 mkdir data/", "note": "SQLite 資料庫（花費紀錄 + 匯率快取 rate_cache 表）；也會產生 -journal 暫存檔"},
+    {"path": "${EXPENSES_DB}", "mode": "rw", "source": "expenses/app.py os.environ EXPENSES_DB", "note": "可覆寫資料庫位置"},
+    {"path": ".env", "mode": "r", "source": "expenses/app.py load_dotenv(APP_DIR/.env)", "note": "可選，內含金鑰；非測試模式啟動時讀取（檔案不存在時只做 is_file 檢查）"},
+    {"path": "expenses/templates/index.html", "mode": "r", "source": "Flask render_template"},
+    {"path": "tests/, .pytest_cache/", "mode": "rw(測試時)", "source": "pytest；測試用 tmp_path 建 DB"}
+  ],
+  "hosts": [
+    {"host": "v6.exchangerate-api.com", "port": 443, "scheme": "https", "source": "expenses/rates.py API_BASE", "purpose": "取得以 TWD 為基準的匯率", "trigger": "新增非 TWD 花費、或按「重新換算」，且快取超過 6 小時/不存在", "secret_placement": "金鑰放在 URL 路徑中（/v6/<KEY>/latest/TWD），不是 HTTP 標頭"}
+  ],
+  "listen": [
+    {"host": "127.0.0.1", "port": 5000, "source": "run.py app.run(host='127.0.0.1', port=args.port)", "note": "--port 可改"}
+  ],
+  "env_vars": [
+    {"name": "EXCHANGERATE_API_KEY", "kind": "secret", "source": "expenses/app.py"},
+    {"name": "EXPENSES_DB", "kind": "config", "source": "expenses/app.py"}
+  ],
+  "secrets": ["EXCHANGERATE_API_KEY"],
+  "hardcoded_secrets": "未發現（.env.example 為空值；測試使用 test-key / k / bad 等假值）",
+  "model_sdks": "無（不使用任何 LLM/模型 SDK）",
+  "tool_definitions": "無（非 Agent，不定義工具）",
+  "subprocess": [
+    {"source": "run.py webbrowser.open(url)", "note": "未加 --no-browser 時開啟系統瀏覽器（xdg-open 等子行程）"}
+  ],
+  "dependencies": {
+    "requirements.txt": ["Flask==3.1.3"],
+    "requirements-dev.txt": ["pytest==9.2.0"],
+    "installed_in_venv": ["blinker 1.9.0", "click 8.5.1", "Flask 3.1.3", "iniconfig 2.3.1", "itsdangerous 2.2.0", "Jinja2 3.1.6", "MarkupSafe 3.0.4", "packaging 26.4", "pluggy 1.7.0", "Pygments 2.21.0", "pytest 9.2.0", "Werkzeug 3.1.9"],
+    "suspicious": "未發現；皆為 Flask/pytest 的已知官方相依套件（無法連網，未向 PyPI 驗證版本是否存在）"
+  },
+  "tests": {
+    "command": ".venv/bin/python -m pytest -q",
+    "count": 23,
+    "covers": ["匯率 URL 格式", "換算", "快取/過期/舊快取備援", "缺金鑰", "API 錯誤", "不支援幣別", "網路失敗", "統計", "資料重啟後保留", "新增/驗證/CSRF", "無金鑰先存再重新換算", "匯率凍結", "篩選", "刪除", "匯出 CSV（含公式注入防護）", "HTML 跳脫", ".env 解析"],
+    "network": "conftest.py 封鎖 socket 連線，所有 API 呼叫皆為假 fetch，因此測試不會觸發任何對外連線、也不讀 .env、不使用 data/expenses.db",
+    "not_covered": ["真正的 HTTP 連線到 v6.exchangerate-api.com（http_get_json 成功路徑）", "run.py 啟動與監聽 127.0.0.1", "預設資料庫 data/expenses.db 的建立與寫入", "從環境變數/.env 讀金鑰", "開啟瀏覽器"]
+  },
+  "suspicious_content": "未發現要求放寬權限或跳過檢查的文字",
+  "fitting_findings": [
+    "應用預設把資料庫寫在應用目錄 data/expenses.db；殼內應用目錄唯讀，因此啟動指令以 EXPENSES_DB=\"$APP_DATA/expenses.db\" 指到 ${APP_DATA}",
+    "金鑰放在網址路徑而非標頭，warp 0.1 的閘門無法注入、lint 也不接受以網址傳遞的機密宣告；強制模式下應用拿不到金鑰，外幣換算無法使用（台幣與其他功能正常）",
+    "README 提供的 .env 金鑰檔放法在殼內不可用：新增 .env 會改變應用雜湊，強制模式拒絕執行",
+    "修補提案：.warp/patches/0001-api-key-in-authorization-header.patch（改用 Authorization: Bearer 標頭；已在暫存副本驗證可用 gate-only 機密，未套用）"
+  ]
+}

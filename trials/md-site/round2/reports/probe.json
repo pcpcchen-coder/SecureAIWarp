@@ -1,0 +1,579 @@
+{
+  "time": "2026-11-26T10:06:57Z",
+  "core": "0.1.0-mvp",
+  "manifest_sha256": "0bcca5854ec8be08f72d80b966b7fd23e8ef1093ceb33ed9adc36dec0d6003cc",
+  "app_digest": "sha256:d50b7970892a8deb158e0715b3dc5fa246f1c8013ea303685fc33cb9f5360062",
+  "run_id": "20261126T100656Z-95ac6132",
+  "identity": "root",
+  "resources": [
+    {
+      "resource": "memory",
+      "limit": "512Mi",
+      "scope": "shell",
+      "mechanism": "cgroup v1"
+    },
+    {
+      "resource": "pids",
+      "limit": "128",
+      "scope": "shell",
+      "mechanism": "cgroup v1"
+    },
+    {
+      "resource": "disk",
+      "limit": "1Gi",
+      "scope": "file",
+      "mechanism": "RLIMIT_FSIZE＋/tmp 容量"
+    },
+    {
+      "resource": "cpu",
+      "limit": "1",
+      "scope": "none",
+      "mechanism": "（尚未實作）"
+    }
+  ],
+  "items": [
+    {
+      "id": "file.read:/tmp/warp-probe-decoy-1502186721/.ssh/id_rsa",
+      "category": "檔案",
+      "name": "讀取殼外檔案 /tmp/warp-probe-decoy-1502186721/.ssh/id_rsa",
+      "status": "blocked",
+      "detail": "no such file or directory"
+    },
+    {
+      "id": "file.read:/tmp/warp-probe-decoy-1502186721/.aws/credentials",
+      "category": "檔案",
+      "name": "讀取殼外檔案 /tmp/warp-probe-decoy-1502186721/.aws/credentials",
+      "status": "blocked",
+      "detail": "no such file or directory"
+    },
+    {
+      "id": "file.read:/root/.ssh/id_rsa",
+      "category": "檔案",
+      "name": "讀取殼外檔案 /root/.ssh/id_rsa",
+      "status": "blocked",
+      "detail": "no such file or directory"
+    },
+    {
+      "id": "file.read:/root/.ssh/id_ed25519",
+      "category": "檔案",
+      "name": "讀取殼外檔案 /root/.ssh/id_ed25519",
+      "status": "blocked",
+      "detail": "no such file or directory"
+    },
+    {
+      "id": "file.read:/root/.aws/credentials",
+      "category": "檔案",
+      "name": "讀取殼外檔案 /root/.aws/credentials",
+      "status": "blocked",
+      "detail": "no such file or directory"
+    },
+    {
+      "id": "file.read:/etc/shadow",
+      "category": "檔案",
+      "name": "讀取殼外檔案 /etc/shadow",
+      "status": "blocked",
+      "detail": "no such file or directory"
+    },
+    {
+      "id": "file.read:<TRIAL>/state2/md-site/apps/md-site-07d5fa906b06/ledger.jsonl",
+      "category": "檔案",
+      "name": "讀取殼外檔案 <TRIAL>/state2/md-site/apps/md-site-07d5fa906b06/ledger.jsonl",
+      "status": "blocked",
+      "detail": "no such file or directory"
+    },
+    {
+      "id": "file.read:<TRIAL>/state2/md-site/trace.key",
+      "category": "檔案",
+      "name": "讀取殼外檔案 <TRIAL>/state2/md-site/trace.key",
+      "status": "blocked",
+      "detail": "no such file or directory"
+    },
+    {
+      "id": "file.read:/app/.warp/warp.yaml",
+      "category": "檔案",
+      "name": "讀取殼外檔案 /app/.warp/warp.yaml",
+      "status": "blocked",
+      "detail": "no such file or directory"
+    },
+    {
+      "id": "file.read:<TRIAL>/apps2/md-site/.warp/warp.yaml",
+      "category": "檔案",
+      "name": "讀取殼外檔案 <TRIAL>/apps2/md-site/.warp/warp.yaml",
+      "status": "blocked",
+      "detail": "no such file or directory"
+    },
+    {
+      "id": "file.list:/root",
+      "category": "檔案",
+      "name": "列出殼外資料夾 /root",
+      "status": "blocked",
+      "detail": "no such file or directory"
+    },
+    {
+      "id": "file.list:/tmp/warp-probe-decoy-1502186721",
+      "category": "檔案",
+      "name": "列出殼外資料夾 /tmp/warp-probe-decoy-1502186721",
+      "status": "blocked",
+      "detail": "no such file or directory"
+    },
+    {
+      "id": "file.list:<TRIAL>/state2/md-site",
+      "category": "檔案",
+      "name": "列出殼外資料夾 <TRIAL>/state2/md-site",
+      "status": "blocked",
+      "detail": "no such file or directory"
+    },
+    {
+      "id": "file.write:/tmp/warp-probe-decoy-1502186721/written-by-probe",
+      "category": "檔案",
+      "name": "寫入殼外或唯讀位置 /tmp/warp-probe-decoy-1502186721/written-by-probe",
+      "status": "blocked",
+      "detail": "no such file or directory"
+    },
+    {
+      "id": "file.write:/root/warp-probe-write",
+      "category": "檔案",
+      "name": "寫入殼外或唯讀位置 /root/warp-probe-write",
+      "status": "blocked",
+      "detail": "no such file or directory"
+    },
+    {
+      "id": "file.write:/etc/warp-probe",
+      "category": "檔案",
+      "name": "寫入殼外或唯讀位置 /etc/warp-probe",
+      "status": "blocked",
+      "detail": "read-only file system"
+    },
+    {
+      "id": "file.write:/usr/warp-probe",
+      "category": "檔案",
+      "name": "寫入殼外或唯讀位置 /usr/warp-probe",
+      "status": "blocked",
+      "detail": "read-only file system"
+    },
+    {
+      "id": "file.write:/warp-probe",
+      "category": "檔案",
+      "name": "寫入殼外或唯讀位置 /warp-probe",
+      "status": "blocked",
+      "detail": "read-only file system"
+    },
+    {
+      "id": "file.write:/app/warp-probe",
+      "category": "檔案",
+      "name": "寫入殼外或唯讀位置 /app/warp-probe",
+      "status": "blocked",
+      "detail": "read-only file system"
+    },
+    {
+      "id": "file.write:<TRIAL>/apps2/md-site/warp-probe-host",
+      "category": "檔案",
+      "name": "寫入殼外或唯讀位置 <TRIAL>/apps2/md-site/warp-probe-host",
+      "status": "blocked",
+      "detail": "no such file or directory"
+    },
+    {
+      "id": "file.write:<TRIAL>/state2/md-site/warp-probe",
+      "category": "檔案",
+      "name": "寫入殼外或唯讀位置 <TRIAL>/state2/md-site/warp-probe",
+      "status": "blocked",
+      "detail": "no such file or directory"
+    },
+    {
+      "id": "file.delete:/tmp/warp-probe-decoy-1502186721/.ssh/id_rsa",
+      "category": "檔案",
+      "name": "刪除殼外檔案 /tmp/warp-probe-decoy-1502186721/.ssh/id_rsa",
+      "status": "blocked",
+      "detail": "no such file or directory"
+    },
+    {
+      "id": "file.delete:<TRIAL>/apps2/md-site/.warp/warp.yaml",
+      "category": "檔案",
+      "name": "刪除殼外檔案 <TRIAL>/apps2/md-site/.warp/warp.yaml",
+      "status": "blocked",
+      "detail": "no such file or directory"
+    },
+    {
+      "id": "file.control-socket:/var/run/docker.sock",
+      "category": "檔案",
+      "name": "存取容器控制介面 /var/run/docker.sock",
+      "status": "blocked",
+      "detail": "no such file or directory"
+    },
+    {
+      "id": "file.control-socket:/run/docker.sock",
+      "category": "檔案",
+      "name": "存取容器控制介面 /run/docker.sock",
+      "status": "blocked",
+      "detail": "no such file or directory"
+    },
+    {
+      "id": "file.control-socket:/run/containerd/containerd.sock",
+      "category": "檔案",
+      "name": "存取容器控制介面 /run/containerd/containerd.sock",
+      "status": "blocked",
+      "detail": "no such file or directory"
+    },
+    {
+      "id": "file.control-socket:/run/podman/podman.sock",
+      "category": "檔案",
+      "name": "存取容器控制介面 /run/podman/podman.sock",
+      "status": "blocked",
+      "detail": "no such file or directory"
+    },
+    {
+      "id": "file.sysfs",
+      "category": "檔案",
+      "name": "存取 /sys",
+      "status": "blocked",
+      "detail": "no such file or directory"
+    },
+    {
+      "id": "fs.remount-app",
+      "category": "檔案",
+      "name": "把唯讀的應用目錄重新掛載為可寫",
+      "status": "blocked",
+      "detail": "operation not permitted"
+    },
+    {
+      "id": "fs.mount",
+      "category": "檔案",
+      "name": "在殼內掛載新的檔案系統",
+      "status": "blocked",
+      "detail": "operation not permitted"
+    },
+    {
+      "id": "fs.nested-userns",
+      "category": "檔案",
+      "name": "以巢狀使用者命名空間解除唯讀掛載",
+      "status": "blocked",
+      "detail": "無法建立巢狀命名空間：fork/exec /warp/bin/warp: no space left on device"
+    },
+    {
+      "id": "net.connect:undeclared.warp-probe.example:443",
+      "category": "對外",
+      "name": "經由閘門連往 undeclared.warp-probe.example:443",
+      "status": "blocked",
+      "detail": "HTTP 403"
+    },
+    {
+      "id": "net.connect:exfil-a3d34d3521014d5bf7e6bd34.warp-probe.example:443",
+      "category": "對外",
+      "name": "經由閘門連往 exfil-a3d34d3521014d5bf7e6bd34.warp-probe.example:443",
+      "status": "blocked",
+      "detail": "HTTP 403"
+    },
+    {
+      "id": "net.connect:127.0.0.1:22",
+      "category": "對外",
+      "name": "經由閘門連往 127.0.0.1:22",
+      "status": "blocked",
+      "detail": "HTTP 403"
+    },
+    {
+      "id": "net.connect:localhost:80",
+      "category": "對外",
+      "name": "經由閘門連往 localhost:80",
+      "status": "blocked",
+      "detail": "HTTP 403"
+    },
+    {
+      "id": "net.connect:[::1]:80",
+      "category": "對外",
+      "name": "經由閘門連往 [::1]:80",
+      "status": "blocked",
+      "detail": "HTTP 403"
+    },
+    {
+      "id": "net.connect:10.0.0.1:80",
+      "category": "對外",
+      "name": "經由閘門連往 10.0.0.1:80",
+      "status": "blocked",
+      "detail": "HTTP 403"
+    },
+    {
+      "id": "net.connect:192.168.1.1:80",
+      "category": "對外",
+      "name": "經由閘門連往 192.168.1.1:80",
+      "status": "blocked",
+      "detail": "HTTP 403"
+    },
+    {
+      "id": "net.connect:172.16.0.1:80",
+      "category": "對外",
+      "name": "經由閘門連往 172.16.0.1:80",
+      "status": "blocked",
+      "detail": "HTTP 403"
+    },
+    {
+      "id": "net.connect:100.64.0.1:80",
+      "category": "對外",
+      "name": "經由閘門連往 100.64.0.1:80",
+      "status": "blocked",
+      "detail": "HTTP 403"
+    },
+    {
+      "id": "net.connect:169.254.169.254:80",
+      "category": "對外",
+      "name": "經由閘門連往 169.254.169.254:80",
+      "status": "blocked",
+      "detail": "HTTP 403"
+    },
+    {
+      "id": "net.connect:metadata.google.internal:80",
+      "category": "對外",
+      "name": "經由閘門連往 metadata.google.internal:80",
+      "status": "blocked",
+      "detail": "HTTP 403"
+    },
+    {
+      "id": "net.connect:[fd00:ec2::254]:80",
+      "category": "對外",
+      "name": "經由閘門連往 [fd00:ec2::254]:80",
+      "status": "blocked",
+      "detail": "HTTP 403"
+    },
+    {
+      "id": "net.connect:100.100.100.200:80",
+      "category": "對外",
+      "name": "經由閘門連往 100.100.100.200:80",
+      "status": "blocked",
+      "detail": "HTTP 403"
+    },
+    {
+      "id": "net.connect:0.0.0.0:80",
+      "category": "對外",
+      "name": "經由閘門連往 0.0.0.0:80",
+      "status": "blocked",
+      "detail": "HTTP 403"
+    },
+    {
+      "id": "net.connect:[::ffff:127.0.0.1]:80",
+      "category": "對外",
+      "name": "經由閘門連往 [::ffff:127.0.0.1]:80",
+      "status": "blocked",
+      "detail": "HTTP 403"
+    },
+    {
+      "id": "net.connect:127.0.0.1:3128",
+      "category": "對外",
+      "name": "經由閘門連往 127.0.0.1:3128",
+      "status": "blocked",
+      "detail": "HTTP 403"
+    },
+    {
+      "id": "net.connect:192.0.2.2:22",
+      "category": "對外",
+      "name": "經由閘門連往 192.0.2.2:22",
+      "status": "blocked",
+      "detail": "HTTP 403"
+    },
+    {
+      "id": "net.connect:192.88.99.1:22",
+      "category": "對外",
+      "name": "經由閘門連往 192.88.99.1:22",
+      "status": "blocked",
+      "detail": "HTTP 403"
+    },
+    {
+      "id": "net.http:http://169.254.169.254/latest/meta-data/",
+      "category": "對外",
+      "name": "經由閘門請求 http://169.254.169.254/latest/meta-data/",
+      "status": "blocked",
+      "detail": "HTTP 403"
+    },
+    {
+      "id": "net.http:http://127.0.0.1:3128/",
+      "category": "對外",
+      "name": "經由閘門請求 http://127.0.0.1:3128/",
+      "status": "blocked",
+      "detail": "HTTP 403"
+    },
+    {
+      "id": "net.http:http://undeclared.warp-probe.example/",
+      "category": "對外",
+      "name": "經由閘門請求 http://undeclared.warp-probe.example/",
+      "status": "blocked",
+      "detail": "HTTP 403"
+    },
+    {
+      "id": "net.direct:1.1.1.1:443",
+      "category": "對外",
+      "name": "不經閘門直接連線 1.1.1.1:443",
+      "status": "blocked",
+      "detail": "dial tcp 1.1.1.1:443: connect: network is unreachable"
+    },
+    {
+      "id": "net.direct:8.8.8.8:53",
+      "category": "對外",
+      "name": "不經閘門直接連線 8.8.8.8:53",
+      "status": "blocked",
+      "detail": "dial tcp 8.8.8.8:53: connect: network is unreachable"
+    },
+    {
+      "id": "net.direct:[2606:4700:4700::1111]:443",
+      "category": "對外",
+      "name": "不經閘門直接連線 [2606:4700:4700::1111]:443",
+      "status": "blocked",
+      "detail": "dial tcp [2606:4700:4700::1111]:443: socket: address family not supported by protocol"
+    },
+    {
+      "id": "net.direct:127.0.0.1:45447",
+      "category": "對外",
+      "name": "不經閘門直接連線 127.0.0.1:45447",
+      "status": "blocked",
+      "detail": "dial tcp 127.0.0.1:45447: connect: connection refused"
+    },
+    {
+      "id": "net.direct:localhost:45447",
+      "category": "對外",
+      "name": "不經閘門直接連線 localhost:45447",
+      "status": "blocked",
+      "detail": "dial tcp 127.0.0.1:45447: connect: connection refused"
+    },
+    {
+      "id": "net.direct:192.0.2.2:22",
+      "category": "對外",
+      "name": "不經閘門直接連線 192.0.2.2:22",
+      "status": "blocked",
+      "detail": "dial tcp 192.0.2.2:22: connect: network is unreachable"
+    },
+    {
+      "id": "net.direct:192.88.99.1:22",
+      "category": "對外",
+      "name": "不經閘門直接連線 192.88.99.1:22",
+      "status": "blocked",
+      "detail": "dial tcp 192.88.99.1:22: connect: network is unreachable"
+    },
+    {
+      "id": "net.udp",
+      "category": "對外",
+      "name": "直接送出 UDP 封包（8.8.8.8:53）",
+      "status": "blocked",
+      "detail": "dial udp 8.8.8.8:53: connect: network is unreachable"
+    },
+    {
+      "id": "dns.lookup:example.com",
+      "category": "DNS",
+      "name": "殼內自行解析 example.com",
+      "status": "blocked",
+      "detail": "lookup example.com on 127.0.0.1:53: read udp 127.0.0.1:33275-\u003e127.0.0.1:53: read: connection refused"
+    },
+    {
+      "id": "dns.lookup:warp-probe-47e00fa40ad8.example.org",
+      "category": "DNS",
+      "name": "殼內自行解析 warp-probe-47e00fa40ad8.example.org",
+      "status": "blocked",
+      "detail": "lookup warp-probe-47e00fa40ad8.example.org on 127.0.0.1:53: read udp 127.0.0.1:52442-\u003e127.0.0.1:53: read: connection refused"
+    },
+    {
+      "id": "dns.loopback",
+      "category": "DNS",
+      "name": "向殼內 127.0.0.1:53 查詢",
+      "status": "blocked",
+      "detail": "read udp 127.0.0.1:46708-\u003e127.0.0.1:53: read: connection refused"
+    },
+    {
+      "id": "secret.proc",
+      "category": "機密",
+      "name": "從殼內任何程序的環境或參數找出真值",
+      "status": "blocked"
+    },
+    {
+      "id": "secret.init-environ",
+      "category": "機密",
+      "name": "讀取殼的 init 程序環境",
+      "status": "blocked",
+      "detail": "permission denied"
+    },
+    {
+      "id": "proc.ptrace-init",
+      "category": "程序",
+      "name": "追蹤（ptrace）殼的 init 程序",
+      "status": "blocked",
+      "detail": "operation not permitted"
+    },
+    {
+      "id": "proc.capabilities",
+      "category": "程序",
+      "name": "殼內程序持有特權（capabilities）",
+      "status": "blocked",
+      "detail": "eff=0 prm=0"
+    },
+    {
+      "id": "proc.sethostname",
+      "category": "程序",
+      "name": "修改主機名稱",
+      "status": "blocked",
+      "detail": "operation not permitted"
+    },
+    {
+      "id": "res.memory",
+      "category": "資源",
+      "name": "超用記憶體（上限 512 MiB）",
+      "status": "blocked",
+      "detail": " signal: killed"
+    },
+    {
+      "id": "res.pids",
+      "category": "資源",
+      "name": "建立過多程序（上限 128）",
+      "status": "blocked",
+      "detail": "建立了 114 個後被拒：resource temporarily unavailable"
+    },
+    {
+      "id": "res.disk",
+      "category": "資源",
+      "name": "寫入超過磁碟上限的檔案（上限 1024 MiB）（僅測單一檔案）",
+      "status": "blocked",
+      "detail": "file too large；注意：此上限以 RLIMIT_FSIZE＋/tmp 容量 對單一檔案套用，總寫入量未受限"
+    },
+    {
+      "id": "spawn.unlisted",
+      "category": "程序",
+      "name": "執行宣告外的程式",
+      "status": "not-implemented",
+      "detail": "spawn 限制屬於僅聲明"
+    },
+    {
+      "id": "data.decoy-marker",
+      "category": "資料",
+      "name": "經允許主機送出誘餌標記",
+      "status": "not-implemented",
+      "detail": "資料閘門屬於第 2 期"
+    },
+    {
+      "id": "ai.budget",
+      "category": "AI",
+      "name": "超過 AI 花費上限",
+      "status": "not-implemented",
+      "detail": "AI 閘門屬於第 2 期"
+    },
+    {
+      "id": "host.decoy-intact",
+      "category": "檔案",
+      "name": "殼外的誘餌憑證檔維持原狀",
+      "status": "blocked"
+    },
+    {
+      "id": "host.loopback-unreached",
+      "category": "對外",
+      "name": "主機本機 127.0.0.1:45447 的服務沒有收到殼內的連線",
+      "status": "blocked",
+      "detail": "收到 0 次連線"
+    },
+    {
+      "id": "host.no-writes",
+      "category": "檔案",
+      "name": "主機上沒有出現殼內寫入的檔案",
+      "status": "blocked"
+    },
+    {
+      "id": "ledger.chain",
+      "category": "帳本",
+      "name": "稽核帳本雜湊鏈完整",
+      "status": "blocked",
+      "detail": "204 筆"
+    }
+  ]
+}

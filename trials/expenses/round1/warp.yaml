@@ -1,0 +1,45 @@
+warp: "0.1"
+app:
+  name: expenses
+  display_name: 旅行記帳
+  version: 1.0.0
+  kind: local-web
+  entry:
+    - /bin/sh
+    - -c
+    - EXPENSES_DB="$APP_DATA/expenses.db" exec .venv/bin/python run.py --no-browser
+  digest: sha256:93e93061cd7faf8982f7313db78d32edd7e91696a697d1438ef3d784c5d00709
+runtime:
+  isolation: process
+  resources:
+    cpu: 1
+    memory: 512Mi
+    pids: 128
+    disk: 1Gi
+  spawn: none
+  background: false
+files:
+  - path: ${APP_DATA}
+    mode: rw
+    purpose: 把你記下的每一筆花費和最近抓到的匯率，存在這個工具在你電腦上專屬的資料夾裡，關掉重開還在。
+network:
+  egress:
+    - host: v6.exchangerate-api.com
+      port: 443
+      purpose: 記外幣花費時，向匯率網站查詢今天的匯率，把金額換算成台幣。
+  ingress:
+    - listen: 5000
+      expose: loopback
+      auth: local-token
+      purpose: 在你自己的電腦上開一個只有你本人瀏覽器能打開的記帳網頁。
+exceptions: []
+evidence:
+  - grant: files[0]
+    observed_in: .warp/evidence/trace-0003.json
+    triggered_by: /bin/sh -c 'EXPENSES_DB="$APP_DATA/expenses.db" exec .venv/bin/python run.py --no-browser'
+  - grant: network.egress[0]
+    observed_in: .warp/evidence/trace-0003.json
+    triggered_by: /bin/sh -c 'EXPENSES_DB="$APP_DATA/expenses.db" exec .venv/bin/python run.py --no-browser'
+  - grant: network.ingress[0]
+    observed_in: .warp/evidence/trace-0003.json
+    triggered_by: /bin/sh -c 'EXPENSES_DB="$APP_DATA/expenses.db" exec .venv/bin/python run.py --no-browser'

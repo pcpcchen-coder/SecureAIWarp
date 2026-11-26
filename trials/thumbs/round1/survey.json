@@ -1,0 +1,30 @@
+{
+  "app": "thumbs",
+  "version": "unversioned (no version string in repo)",
+  "scenario_types": ["local CLI tool (bash script operating on user-chosen folders); docs/06-scenarios.md not available to fitter, so A-I code not assigned"],
+  "entry": "thumbs.sh",
+  "start_command": "./thumbs.sh [-w W] [-c C] [-o NAME] [-f] [-q] <input_dir> <output_dir>",
+  "language": "bash 4+",
+  "external_programs": ["ffmpeg", "ffprobe", "convert", "montage", "identify (tests only)", "awk", "basename", "mkdir", "mv", "rm", "cat", "head", "mktemp (tests only)", "stat (tests only)", "find (tests only)", "grep (tests only)", "wc (tests only)", "sleep (tests only)"],
+  "file_paths": {
+    "read": ["<input_dir> (first level only, user-chosen)", "system libraries / ImageMagick & ffmpeg config and fonts (via tools)"],
+    "write": ["<output_dir> (user-chosen; thumbnails, overview.jpg, .overview.list, .tmp.* temp files)"],
+    "tests_write": ["tests/.work.XXXXXX inside app dir, or ${THUMBS_TEST_TMP}"]
+  },
+  "hosts": [],
+  "network": "none expected; script makes no network calls; README says tests need no network",
+  "env_vars": ["THUMBS_TEST_TMP (tests only, optional)"],
+  "secrets": [],
+  "model_sdk": [],
+  "tool_definitions": [],
+  "listening_ports": [],
+  "hardcoded_keys": "none found",
+  "packages": "no package manifest; relies on system ffmpeg 6.1.1 and ImageMagick 6.9.12 from OS packages",
+  "tests": {
+    "command": "tests/run_tests.sh",
+    "count": 24,
+    "covers": ["argument errors", "width/aspect", "video middle frame", "ignore non-media", "overview create/update", "skip/redo logic", "-f -q -c -o", "tricky filenames", "no upscale", "alpha and animated GIF", "broken files", "empty dir"],
+    "not_covered": ["-h help output", "IMAGE/VIDEO formats other than jpg/png/gif/mp4/mov (bmp, webp, tif, mkv, avi, webm ...)", "missing ffmpeg/ImageMagick (exit 3)", "-o name containing '/' rejected", "real user folders (only synthetic)"]
+  },
+  "suspicious_content": "none found in README, script or tests"
+}

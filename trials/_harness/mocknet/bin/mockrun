@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# mockrun <command...>: run a command OUTSIDE warp with every mocked name
+# (including api.anthropic.com) pointing at the mock server, without touching
+# the machine-wide /etc/hosts. Uses a private mount namespace (root; for a
+# non-root user it falls back to a user namespace). Also applies env.sh.
+set -euo pipefail
+D="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+. "$D/env.sh"
+[ $# -gt 0 ] || { echo "usage: mockrun <command...>" >&2; exit 2; }
+H="$(mktemp "${TMPDIR:-/tmp}/mockrun-hosts.XXXXXX")"
+trap 'rm -f "$H"' EXIT
+{ grep -v -w -F -e "$PRIVATE_HOSTS" /etc/hosts; echo "$MOCK_IP $PRIVATE_HOSTS"; } > "$H"
+chmod 644 "$H"
+if [ "$(id -u)" = 0 ]; then U=(unshare --mount --propagation private); else U=(unshare --user --map-current-user --mount --propagation private); fi
+"${U[@]}" bash -c 'mount --bind "$1" /etc/hosts && shift && exec "$@"' _ "$H" "$@"

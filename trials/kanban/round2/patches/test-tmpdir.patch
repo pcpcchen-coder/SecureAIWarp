@@ -1,0 +1,36 @@
+diff --git a/test/server.test.js b/test/server.test.js
+--- a/test/server.test.js	2026-11-26 10:01:28.308444501 +0000
++++ b/test/server.test.js	2026-11-26 10:01:28.328510694 +0000
+@@ -3,7 +3,7 @@
+ const { test, before, after } = require('node:test');
+ const assert = require('node:assert/strict');
+ const fs = require('fs');
+-const TMP_ROOT = require('path').join(__dirname, '..', '.test-tmp');
++const TMP_ROOT = process.env.KANBAN_TEST_TMP || require('path').join(__dirname, '..', '.test-tmp');
+ const path = require('path');
+ const http = require('http');
+ const { createServer } = require('../server');
+diff --git a/test/store.test.js b/test/store.test.js
+--- a/test/store.test.js	2026-11-26 10:01:28.308463232 +0000
++++ b/test/store.test.js	2026-11-26 10:01:28.328721326 +0000
+@@ -3,7 +3,7 @@
+ const { test, beforeEach, afterEach } = require('node:test');
+ const assert = require('node:assert/strict');
+ const fs = require('fs');
+-const TMP_ROOT = require('path').join(__dirname, '..', '.test-tmp');
++const TMP_ROOT = process.env.KANBAN_TEST_TMP || require('path').join(__dirname, '..', '.test-tmp');
+ const path = require('path');
+ const { Store, ValidationError, NotFoundError } = require('../lib/store');
+ 
+diff --git a/test/ui.test.js b/test/ui.test.js
+--- a/test/ui.test.js	2026-11-26 10:01:28.308484736 +0000
++++ b/test/ui.test.js	2026-11-26 10:01:28.328847409 +0000
+@@ -8,7 +8,7 @@
+ const path = require('path');
+ const { createServer } = require('../server');
+ 
+-const TMP_ROOT = path.join(__dirname, '..', '.test-tmp');
++const TMP_ROOT = process.env.KANBAN_TEST_TMP || path.join(__dirname, '..', '.test-tmp');
+ const CANDIDATES = [
+   process.env.CHROME_PATH,
+   '/usr/bin/google-chrome',

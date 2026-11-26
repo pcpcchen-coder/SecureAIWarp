@@ -1,0 +1,36 @@
+--- a/expenses/rates.py
++++ b/expenses/rates.py
+@@ -35,10 +35,17 @@
+     return f"{API_BASE}/{urllib.parse.quote(api_key, safe='')}/latest/{base}"
+ 
+ 
+-def http_get_json(url: str) -> dict:
++def build_header_url(base: str = BASE_CURRENCY) -> str:
++    """金鑰改放在 Authorization 標頭時使用的網址（網址本身不含金鑰）。"""
++    return f"{API_BASE}/latest/{base}"
++
++
++def http_get_json(url: str, api_key: Optional[str] = None) -> dict:
+     """預設的 HTTP 取得函式（只用標準函式庫）。測試時會替換掉。"""
+-    req = urllib.request.Request(url, headers={"Accept": "application/json",
+-                                               "User-Agent": "expenses-app/1.0"})
++    headers = {"Accept": "application/json", "User-Agent": "expenses-app/1.0"}
++    if api_key:
++        headers["Authorization"] = f"Bearer {api_key}"
++    req = urllib.request.Request(url, headers=headers)
+     try:
+         with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
+             return json.loads(resp.read().decode("utf-8"))
+@@ -93,7 +100,11 @@
+     def _fetch_remote(self) -> dict:
+         if not self.api_key:
+             raise RateError("尚未設定 EXCHANGERATE_API_KEY")
+-        data = self.fetch(build_url(self.api_key))
++        if self.fetch is http_get_json:
++            # 金鑰放在 Authorization 標頭，不放在網址裡（網址會出現在記錄檔、代理伺服器中）
++            data = http_get_json(build_header_url(), api_key=self.api_key)
++        else:
++            data = self.fetch(build_url(self.api_key))
+         if not isinstance(data, dict):
+             raise RateError("匯率 API 回應格式錯誤")
+         if data.get("result") != "success":

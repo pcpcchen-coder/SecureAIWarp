@@ -1,0 +1,36 @@
+warp: "0.1"
+app:
+  name: thumbs
+  display_name: thumbs.sh 縮圖與總覽圖
+  version: 0.1.0
+  kind: cli
+  entry:
+    - ./thumbs.sh
+    - ${USER_PICK:photos}
+    - ${USER_PICK:thumbs}
+  digest: sha256:bf7d6b375c7324260a51795f0fd5409d0199a29acd56e58268e81fd13db98291
+  author_note: 掃描一個資料夾裡的圖片與影片，產生縮圖並拼成一張總覽圖。
+runtime:
+  isolation: process
+  resources:
+    cpu: 1
+    memory: 512Mi
+    pids: 128
+    disk: 1Gi
+  spawn: listed
+  background: false
+files:
+  - path: ${USER_PICK:photos}
+    mode: ro
+    purpose: 讀取你選定資料夾裡的照片和影片，用來做縮圖（只讀，不會改動原檔）
+  - path: ${USER_PICK:thumbs}
+    mode: rw
+    purpose: 把做好的縮圖和總覽圖存進你選定的輸出資料夾
+exceptions: []
+evidence:
+  - grant: files[0]
+    observed_in: .warp/evidence/trace-0004.json
+    triggered_by: ./thumbs.sh '${USER_PICK:photos}' '${USER_PICK:thumbs}'
+  - grant: files[1]
+    observed_in: .warp/evidence/trace-0004.json
+    triggered_by: ./thumbs.sh '${USER_PICK:photos}' '${USER_PICK:thumbs}'

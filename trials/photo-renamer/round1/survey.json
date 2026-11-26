@@ -1,0 +1,43 @@
+{
+  "app": {"name": "photo-renamer", "version": "0.1.0", "language": "python>=3.9"},
+  "type": {
+    "scenario": "local CLI tool (single-user, runs on the recipient's own machine, no network, no model)",
+    "scenario_letter": "unknown - docs/06-scenarios.md is not available to the fitter; not guessed",
+    "notes": "No AI/model SDK, no tool definitions, no server, no listening port."
+  },
+  "entry_points": [
+    {"kind": "console_script", "name": "photo-renamer", "target": "photo_renamer.cli:main", "command": ".venv/bin/photo-renamer <preview|rename [-y]|undo> <folder>"},
+    {"kind": "module", "command": ".venv/bin/python -m photo_renamer <preview|rename [-y]|undo> <folder>"}
+  ],
+  "files": {
+    "reads": ["<user-chosen folder>/* (top level only, photo extensions)", "<user-chosen folder>/.photo-renamer-journal.json"],
+    "writes": [
+      "<user-chosen folder>/<photo> (os.rename, two-phase via .photo-renamer-tmp-<token>-<i>)",
+      "<user-chosen folder>/.photo-renamer-journal.json (+ .photo-renamer-journal.tmp, os.replace; unlink when empty)"
+    ],
+    "app_code": ["photo_renamer/", ".venv/ (Python interpreter + Pillow)"],
+    "tests_only": ["pytest tmp_path (system temp dir, e.g. /tmp/pytest-of-<user>/)", ".pytest_cache/", "tests/__pycache__/"]
+  },
+  "network": {"hosts": [], "notes": "No network code found (no socket/http/urllib/requests imports)."},
+  "environment_variables": [],
+  "secrets": [],
+  "model_sdks": [],
+  "tools": [
+    {"name": "rename", "effect": "renames files in the user-chosen folder; reversible via undo; asks y/N unless -y", "risk_hint": "modifies user files"},
+    {"name": "undo", "effect": "renames files back using the journal", "risk_hint": "modifies user files"},
+    {"name": "preview", "effect": "read-only", "risk_hint": "low"}
+  ],
+  "dependencies": {
+    "declared": ["Pillow>=9.0", "pytest (test extra)", "setuptools>=61 (build)"],
+    "installed_venv": {"pillow": "13.0.0", "pytest": "9.2.0", "iniconfig": "2.3.1", "packaging": "26.4", "pluggy": "1.7.0", "Pygments": "2.21.0", "pip": "26.2.2"},
+    "suspicious": []
+  },
+  "hardcoded_secrets": [],
+  "suspicious_content": [],
+  "tests": {
+    "command": ".venv/bin/python -m pytest -v",
+    "count": 19,
+    "covers": ["EXIF read + mtime fallback", "preview no-op", "rename + ext normalisation", "collision suffixes (incl. case-insensitive)", "name swap two-phase move", "rerun no-op", "non-photo ignore", "undo single/multiple/refuse-overwrite/no-journal", "CLI confirm prompt, -y, bad folder"],
+    "not_covered": ["CLI against a real user-chosen folder (tests use pytest tmp_path)", "HEIC/RAW files", "python -m entry"]
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "note": "warp survey 尚未實作；由安裝 Agent 依倉庫內容手動盤點（2026-11-26）",
+  "app": {
+    "name": "weekly-digest",
+    "version": "1.0.0",
+    "kind": "cli",
+    "language": "Node.js (ESM)，engines node >=18.18",
+    "entry": "bin/weekly-digest.js",
+    "start_command": "node bin/weekly-digest.js <會議記錄資料夾> [-o <輸出檔>] [--recursive] [--dry-run] ...",
+    "start_command_in_shell": "node bin/weekly-digest.js ${USER_PICK:notes} -o ${APP_DATA}/weekly-digest.md"
+  },
+  "files": {
+    "reads": [
+      "使用者以第一個參數指定的會議記錄資料夾（.txt/.md/.markdown，最近 N 天；--recursive 時含子資料夾）"
+    ],
+    "writes": [
+      "週報輸出檔：預設 ./weekly-digest-<今天>.md（目前工作目錄，殼內為唯讀的 /app），可用 -o 指定；會先 mkdir -p 輸出檔所在目錄"
+    ],
+    "sdk_possible_reads": [
+      "@anthropic-ai/sdk 1.14.0 在未設定 ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN 時可能讀取 `ant auth login` 存在 $HOME 下的設定檔（defaultChain）；本應用有金鑰才會建立 client"
+    ]
+  },
+  "network": {
+    "hosts": ["api.anthropic.com:443（POST /v1/messages，SSE 串流；SDK 預設網址）"],
+    "overrides": ["ANTHROPIC_BASE_URL 環境變數會讓 SDK 改連其他網址（README 註明一般不要設定）"],
+    "telemetry": "應用本身無；SDK 依賴 @opentelemetry/api（僅 API 介面，未設定 exporter 時不會連線）"
+  },
+  "env_vars": ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN（SDK 備用）", "ANTHROPIC_BASE_URL（SDK）", "ANTHROPIC_LOG（SDK）", "ANTHROPIC_CUSTOM_HEADERS（SDK）", "ANTHROPIC_WEBHOOK_SIGNING_KEY（SDK，未使用）"],
+  "secrets": [
+    {"name": "ANTHROPIC_API_KEY", "transport": "SDK 1.14.0 以 `Authorization: Bearer <金鑰>` 標頭送出（不是 x-api-key）", "provided_by": "recipient"}
+  ],
+  "model_sdk": {"package": "@anthropic-ai/sdk", "version": "1.14.0", "default_model": "claude-opus-5-5", "beta": "server-side-fallback-2026-07-01（fallbacks: default，可用 --no-fallbacks 關閉）"},
+  "ai_tools": [],
+  "hardcoded_secrets": "未發現（測試中只有 sk-ant-test、bad 等假值，送往本機假 API）",
+  "tests": {
+    "command_host": "npm test（= node --test \"test/*.test.js\"）",
+    "command_in_shell": "node --test test/*.test.js（殼內沒有 npm；node 位於 /usr/local/sbin/node）",
+    "framework": "node:test",
+    "count_expected": 23,
+    "covers": ["檔名日期解析與篩選", "分段與分組", "map-reduce 流程（假 ask 函式）", "askClaude 串流請求格式（本機假 API）", "拒答/截斷/401 錯誤處理", "CLI 端對端（本機假 API）", "--dry-run", "參數驗證"],
+    "starts_local_server": "是：test/helpers.js 的 startMockApi 在 127.0.0.1 隨機埠監聽（只供測試，不是應用功能）",
+    "writes_app_dir": "否：暫存資料寫到 os.tmpdir()（殼內 /tmp）",
+    "network": "否：只連殼內 127.0.0.1 假 API",
+    "not_covered": ["對真實 api.anthropic.com 的呼叫（需要真金鑰）", "預設輸出路徑（目前目錄）", "--recursive 在 CLI 層面"]
+  },
+  "supply_chain": {
+    "dependencies": ["@anthropic-ai/sdk 1.14.0", "@opentelemetry/api 1.10.0", "json-schema-to-ts 3.1.1", "@babel/runtime 7.29.15", "ts-algebra 2.0.0", "standardwebhooks 1.3.0", "@stablelib/base64 1.0.1", "fast-sha256 1.3.0"],
+    "findings": [
+      "package.json 固定 \"1.14.0\"，但 package-lock.json 根項目記為 \"^1.14.0\"，兩者不一致（README 宣稱版本固定）",
+      "所有套件 resolved 皆為 registry.npmjs.org 並有 integrity；未發現 install/postinstall 腳本",
+      "本機無法連外查證這些版本是否存在於官方套件庫"
+    ]
+  },
+  "section5_flags": {
+    "key_in_url_or_body": false,
+    "hosts_depend_on_user_data": false,
+    "decoy_limits_observation": "以誘餌金鑰側錄時上游會回 401，之後的串流回應、後續請求與週報寫入無法觀測（第 5 節第 3 列）"
+  },
+  "suspicious_content": []
+}

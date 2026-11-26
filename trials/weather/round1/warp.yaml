@@ -1,0 +1,51 @@
+# 由 warp draft 依側錄紀錄產生的宣告初稿。
+# 請逐條收緊、填寫每條授權的 purpose（一句人話），再執行 warp lint。
+warp: "0.1"
+app:
+  name: weather
+  display_name: weather
+  version: 0.1.0
+  kind: cli
+  entry:
+    - .venv/bin/python
+    - -m
+    - weather_cli
+  digest: sha256:a42d851586c7f29d84366a9a8324f8d9a1d65f131e15999d5bb152378631c176
+runtime:
+  isolation: process
+  resources:
+    cpu: 1
+    memory: 512Mi
+    pids: 128
+    disk: 1Gi
+  spawn: none
+  background: false
+files:
+  - path: ${APP_DATA}
+    mode: rw
+    purpose: 記住你加入的常用城市清單（含座標），下次不必重新查地名。
+  - path: ${APP_CACHE}
+    mode: rw
+    purpose: 暫存最近查過的天氣與地名結果，短時間內重複查詢不必再連網路。
+network:
+  egress:
+    - host: api.open-meteo.com
+      port: 443
+      purpose: 向免費天氣服務 Open-Meteo 取得現在天氣與未來三天預報。
+    - host: geocoding-api.open-meteo.com
+      port: 443
+      purpose: 把你輸入的城市名稱換成地圖座標，才能查那個地方的天氣。
+exceptions: []
+evidence:
+  - grant: files[0]
+    observed_in: .warp/evidence/trace-0004.json
+    triggered_by: .venv/bin/python -m weather_cli --add '台北'
+  - grant: files[1]
+    observed_in: .warp/evidence/trace-0003.json
+    triggered_by: .venv/bin/python -m weather_cli '台北'
+  - grant: network.egress[0]
+    observed_in: .warp/evidence/trace-0003.json
+    triggered_by: .venv/bin/python -m weather_cli '台北'
+  - grant: network.egress[1]
+    observed_in: .warp/evidence/trace-0003.json
+    triggered_by: .venv/bin/python -m weather_cli '台北'

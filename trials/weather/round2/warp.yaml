@@ -1,0 +1,52 @@
+# 由 warp draft 依側錄紀錄產生的宣告初稿。
+# 請逐條收緊、填寫每條授權的 purpose（一句人話），再執行 warp lint。
+# ⚠ app.entry 取自最後一次側錄的指令（含參數），app.kind 暫填 cli：請確認或改正。
+warp: "0.1"
+app:
+  name: weather
+  display_name: 命令列天氣查詢
+  version: 0.1.0
+  kind: cli
+  entry:
+    - python3
+    - -m
+    - weather_cli
+  digest: sha256:a42d851586c7f29d84366a9a8324f8d9a1d65f131e15999d5bb152378631c176
+runtime:
+  isolation: process
+  resources:
+    cpu: 1
+    memory: 512Mi
+    pids: 128
+    disk: 1Gi
+  spawn: none
+  background: false
+files:
+  - path: ${APP_DATA}
+    mode: rw
+    purpose: 保存你的常用城市清單（城市名稱與座標）
+  - path: ${APP_CACHE}
+    mode: rw
+    purpose: 暫存查過的天氣與地名結果，短時間內重複查詢就不必再連網
+network:
+  egress:
+    - host: api.open-meteo.com
+      port: 443
+      purpose: 向 Open-Meteo 取得你查詢地點的現在天氣與未來三天預報
+    - host: geocoding-api.open-meteo.com
+      port: 443
+      purpose: 向 Open-Meteo 把你輸入的城市名稱換成地圖座標
+exceptions: []
+evidence:
+  - grant: files[0]
+    observed_in: .warp/evidence/trace-0004.json
+    triggered_by: python3 -m weather_cli --add '東京'
+  - grant: files[1]
+    observed_in: .warp/evidence/trace-0003.json
+    triggered_by: python3 -m weather_cli '台北'
+  - grant: network.egress[0]
+    observed_in: .warp/evidence/trace-0003.json
+    triggered_by: python3 -m weather_cli '台北'
+  - grant: network.egress[1]
+    observed_in: .warp/evidence/trace-0003.json
+    triggered_by: python3 -m weather_cli '台北'

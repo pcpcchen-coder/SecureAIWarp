@@ -1,0 +1,19 @@
+{
+  "name": "local-kanban",
+  "version": "1.0.0",
+  "description": "本機看板待辦工具（待辦／進行中／完成）",
+  "private": true,
+  "main": "server.js",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test \"test/*.test.js\""
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "puppeteer-core": "25.17.0"
+  }
+}

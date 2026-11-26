@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>旅行記帳</title>
+<style>
+  :root { --bg:#f7f7f5; --card:#fff; --fg:#222; --muted:#777; --line:#e3e3e0; --accent:#2b6cb0; --warn:#b7791f; --err:#c53030; --ok:#2f855a; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#1a1a1a; --card:#242424; --fg:#eee; --muted:#999; --line:#3a3a3a; --accent:#63b3ed; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.5 system-ui, "PingFang TC", "Noto Sans TC", sans-serif; }
+  main { max-width: 1000px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 1.4rem; margin: 8px 0 16px; }
+  h2 { font-size: 1.05rem; margin: 0 0 12px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:16px; }
+  form.add { display:grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap:10px; align-items:end; }
+  label { display:flex; flex-direction:column; font-size:.85rem; color:var(--muted); gap:4px; }
+  input, select, button { font:inherit; padding:6px 8px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--fg); }
+  button { background:var(--accent); color:#fff; border:none; cursor:pointer; }
+  button.link { background:none; color:var(--err); padding:0; }
+  .flash { padding:8px 12px; border-radius:6px; margin-bottom:8px; }
+  .flash.ok { background:#e6f4ea; color:var(--ok); } .flash.warn { background:#fdf3e1; color:var(--warn); } .flash.error { background:#fde8e8; color:var(--err); }
+  table { width:100%; border-collapse:collapse; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  td.num, th.num { text-align:right; font-variant-numeric: tabular-nums; }
+  .muted { color:var(--muted); font-size:.85rem; }
+  .grid2 { display:grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap:16px; }
+  .filters { display:flex; flex-wrap:wrap; gap:8px; align-items:end; }
+  .scroll { overflow-x:auto; }
+  .total { font-size:1.3rem; font-weight:600; }
+</style>
+</head>
+<body>
+<main>
+  <h1>旅行記帳</h1>
+
+  {% with msgs = get_flashed_messages(with_categories=true) %}
+    {% for cat, m in msgs %}<div class="flash {{ cat }}">{{ m }}</div>{% endfor %}
+  {% endwith %}
+
+  {% if not rate_status.has_key %}
+    <div class="flash warn">尚未設定匯率 API 金鑰（EXCHANGERATE_API_KEY），外幣花費會先存下，之後再換算。台幣不受影響。</div>
+  {% endif %}
+
+  <section class="card">
+    <h2>新增花費</h2>
+    <form class="add" method="post" action="{{ url_for('add_expense') }}">
+      <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+      <label>日期 <input type="date" name="date" value="{{ today }}" required></label>
+      <label>金額 <input type="number" name="amount" step="any" min="0" required></label>
+      <label>幣別
+        <input name="currency" list="currency-list" value="TWD" maxlength="3" required style="text-transform:uppercase">
+        <datalist id="currency-list">{% for c in currencies %}<option value="{{ c }}">{% endfor %}</datalist>
+      </label>
+      <label>類別
+        <select name="category" required>{% for c in categories %}<option>{{ c }}</option>{% endfor %}</select>
+      </label>
+      <label style="grid-column: span 2">備註 <input name="note" maxlength="500"></label>
+      <button type="submit">新增</button>
+    </form>
+  </section>
+
+  <section class="card">
+    <form class="filters" method="get" action="{{ url_for('index') }}">
+      <label>月份
+        <select name="month"><option value="">全部</option>
+          {% for m in months %}<option value="{{ m }}" {% if m == month %}selected{% endif %}>{{ m }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>類別
+        <select name="category"><option value="">全部</option>
+          {% for c in used_categories %}<option {% if c == category %}selected{% endif %}>{{ c }}</option>{% endfor %}
+        </select>
+      </label>
+      <button type="submit">篩選</button>
+      <a href="{{ url_for('export_csv', month=month or '', category=category or '') }}">匯出 CSV</a>
+    </form>
+    {% if pending_total %}
+      <form method="post" action="{{ url_for('reconvert') }}" style="margin-top:10px">
+        <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+        <span class="muted">有 {{ pending_total }} 筆尚未換算成台幣</span>
+        <button type="submit">重新換算</button>
+      </form>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <h2>統計（台幣）</h2>
+    <p class="total">合計 NT$ {{ summary.total|money }}
+      {% if summary.pending %}<span class="muted">（另有 {{ summary.pending }} 筆未換算未計入）</span>{% endif %}</p>
+    <div class="grid2">
+      <div><h2>依月份</h2><table>
+        {% for m, v in summary.by_month.items() %}<tr><td>{{ m }}</td><td class="num">{{ v|money }}</td></tr>{% else %}<tr><td class="muted">無資料</td></tr>{% endfor %}
+      </table></div>
+      <div><h2>依類別</h2><table>
+        {% for c, v in summary.by_category.items() %}<tr><td>{{ c }}</td><td class="num">{{ v|money }}</td></tr>{% else %}<tr><td class="muted">無資料</td></tr>{% endfor %}
+      </table></div>
+    </div>
+    {% if summary.by_month_category %}
+    <h2 style="margin-top:16px">月份 × 類別</h2>
+    <div class="scroll"><table>
+      <tr><th>月份</th><th>類別</th><th class="num">NT$</th></tr>
+      {% for r in summary.by_month_category %}<tr><td>{{ r.month }}</td><td>{{ r.category }}</td><td class="num">{{ r.twd|money }}</td></tr>{% endfor %}
+    </table></div>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <h2>明細（{{ rows|length }} 筆）</h2>
+    <div class="scroll"><table>
+      <tr><th>日期</th><th>類別</th><th>備註</th><th class="num">原幣金額</th><th class="num">NT$</th><th></th></tr>
+      {% for r in rows %}
+      <tr>
+        <td>{{ r.date }}</td><td>{{ r.category }}</td><td>{{ r.note }}</td>
+        <td class="num">{{ r.amount|money }} {{ r.currency }}</td>
+        <td class="num">{{ r.twd_amount|money }}</td>
+        <td><form method="post" action="{{ url_for('delete_expense', expense_id=r.id) }}" onsubmit="return confirm('確定刪除？')">
+          <input type="hidden" name="csrf" value="{{ csrf_token() }}"><button class="link" type="submit">刪除</button></form></td>
+      </tr>
+      {% else %}<tr><td colspan="6" class="muted">還沒有紀錄</td></tr>{% endfor %}
+    </table></div>
+    <p class="muted">台幣金額以記帳當下的匯率換算並保存（匯率來源：exchangerate-api.com，快取 6 小時）。</p>
+  </section>
+</main>
+</body>
+</html>

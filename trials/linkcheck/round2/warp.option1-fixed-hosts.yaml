@@ -1,0 +1,46 @@
+# 選項①的參考稿（未採用，待人決定）：只放行一份固定的主機清單，目前只有側錄中觀察到的 go.dev。
+# 清單以外的網址會被擋下，linkcheck 會把它們回報為壞連結（request failed: Forbidden）。
+warp: "0.1"
+app:
+  name: linkcheck
+  display_name: linkcheck（Markdown 連結檢查）
+  version: 1.0.0
+  kind: cli
+  entry:
+    - /app/linkcheck
+    - ${USER_PICK:docs}
+  digest: sha256:291ab14181699d4057de98e3eaa0c6f5f5576e7a0688e07f108a84fd30bf95be
+runtime:
+  isolation: process
+  resources:
+    cpu: 1
+    memory: 512Mi
+    pids: 128
+    disk: 1Gi
+  spawn: none
+  background: false
+files:
+  - path: ${USER_PICK:docs}
+    mode: ro
+    purpose: 讀取你選定的文件資料夾裡的 Markdown 檔，檢查裡面的連結（只讀不改）
+network:
+  egress:
+    - host: go.dev
+      port: 443
+      purpose: 檢查文件中指向 go.dev 的外部連結是否還能打開（只送出 HEAD／GET 請求，不上傳文件內容）
+exceptions: []
+evidence:
+  - grant: files[0]
+    observed_in: .warp/evidence/trace-0004.json
+    triggered_by: /app/linkcheck -offline '${USER_PICK:docs}'
+  - grant: files[0]
+    observed_in: .warp/evidence/trace-0003.json
+    triggered_by: /app/linkcheck '${USER_PICK:docs}'
+  - grant: network.egress[0]
+    observed_in: .warp/evidence/trace-0003.json
+    triggered_by: /app/linkcheck '${USER_PICK:docs}'
+denied_by_design:
+  - behavior: 對外連線到 go.dev 以外、文件中出現的其他網站
+    reason: 核心只能放行事先列出的主機；清單以外的網站一律擋下
+  - behavior: 測試執行時在殼內 127.0.0.1 隨機埠開啟的臨時測試伺服器（側錄到 41091、42613 埠）
+    reason: 這是測試用的假伺服器，應用本身不提供任何連線服務

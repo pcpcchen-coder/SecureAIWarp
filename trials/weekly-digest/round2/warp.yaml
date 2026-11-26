@@ -1,0 +1,58 @@
+# 由 warp draft --include-failed 初稿收緊而成（見回報）。
+warp: "0.1"
+app:
+  name: weekly-digest
+  display_name: 會議週報產生器
+  version: 1.0.0
+  kind: cli
+  entry:
+    - node
+    - bin/weekly-digest.js
+    - ${USER_PICK:notes}
+    - -o
+    - /dev/stdout
+  digest: sha256:84da9f4529f3a53c46dd2c874319722c45072b3eeb70d67d1417e85e4f2b4bb7
+runtime:
+  isolation: process
+  resources:
+    cpu: 1
+    memory: 512Mi
+    pids: 128
+    disk: 1Gi
+  spawn: none
+  background: false
+files:
+  - path: ${USER_PICK:notes}
+    mode: ro
+    purpose: 讀取你選定的會議記錄資料夾（只讀，不會修改）
+network:
+  egress:
+    - host: api.anthropic.com
+      port: 443
+      purpose: 把會議記錄送給 Claude 整理成週報
+secrets:
+  - name: ANTHROPIC_API_KEY
+    provided_by: recipient
+    bind:
+      host: api.anthropic.com
+      inject:
+        header: authorization
+    visibility: gate-only
+    purpose: 用你自己的 Anthropic 金鑰呼叫 Claude；程式本身看不到金鑰
+exceptions: []
+evidence:
+  - grant: files[0]
+    observed_in: .warp/evidence/trace-0004.json
+    triggered_by: node bin/weekly-digest.js '${USER_PICK:notes}' --dry-run
+  - grant: files[0]
+    observed_in: .warp/evidence/trace-0003.json
+    triggered_by: node bin/weekly-digest.js '${USER_PICK:notes}' -o '${APP_DATA}/weekly-digest.md'
+  - grant: network.egress[0]
+    observed_in: .warp/evidence/trace-0003.json
+    triggered_by: node bin/weekly-digest.js '${USER_PICK:notes}' -o '${APP_DATA}/weekly-digest.md'
+  - grant: secrets[0]
+    observed_in: .warp/evidence/trace-0003.json
+    triggered_by: node bin/weekly-digest.js '${USER_PICK:notes}' -o '${APP_DATA}/weekly-digest.md'
+denied_by_design:
+  - behavior: 測試時在殼內 127.0.0.1 開啟的臨時假 API 伺服器（node --test 側錄中的 38645 埠）
+    reason: 只是自動化測試用的本機假伺服器，應用本身不提供任何網路服務

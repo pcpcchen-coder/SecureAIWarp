@@ -1,0 +1,46 @@
+{
+  "app": {
+    "name": "thumbs",
+    "display_name": "thumbs.sh 縮圖與總覽圖",
+    "version": "unknown (no package.json / pyproject.toml; draft will default to 0.1.0)",
+    "kind": "cli",
+    "entry_point": "thumbs.sh",
+    "start_command": "./thumbs.sh [-w 寬度] [-c 欄數] [-o 檔名] [-f] [-q] 輸入資料夾 輸出資料夾",
+    "language": "bash 4+"
+  },
+  "external_tools": ["ffmpeg", "ffprobe", "convert", "montage", "identify (tests only)", "awk", "mktemp", "stat", "find"],
+  "files": {
+    "reads": ["輸入資料夾第一層的圖片/影片（使用者指定）"],
+    "writes": [
+      "輸出資料夾：<原檔名>.jpg 縮圖、overview.jpg（或 -o 指定名稱）、隱藏檔 .overview.list、暫存檔 .tmp.<pid>.<rand>.jpg",
+      "mkdir -p 輸出資料夾"
+    ],
+    "writes_into_app_dir": "應用本身不會；測試預設把暫存放在 tests/.work.XXXXXX（會 EROFS），README 記載可用 THUMBS_TEST_TMP 改位置"
+  },
+  "network": {
+    "hosts": [],
+    "notes": "程式碼中沒有任何網址、curl/wget 或網路呼叫。ffmpeg/ImageMagick 理論上可讀取 URL 輸入，但應用只把本機檔案路徑交給它們。"
+  },
+  "env_vars": {
+    "app": [],
+    "tests": ["THUMBS_TEST_TMP（測試暫存位置，選填）"]
+  },
+  "secrets": [],
+  "model_sdk": null,
+  "ai_tools": [],
+  "listening": "無",
+  "tests": {
+    "command": "tests/run_tests.sh",
+    "in_shell_command": "env THUMBS_TEST_TMP=/tmp bash tests/run_tests.sh",
+    "framework": "自製 bash 測試，素材由 ffmpeg/ImageMagick 現場產生，不需網路",
+    "count": "15 個測試函式，共 24 項 ok/FAIL 判定（以實際執行輸出為準）",
+    "covers": ["參數錯誤", "縮圖寬度與比例", "影片取中間一格", "忽略非媒體檔", "總覽圖產生與更新", "略過已做過的", "原始檔更新/新增/刪除", "-f -q -c -o", "特殊檔名", "不放大", "透明背景與動畫 GIF", "壞檔", "空資料夾"],
+    "not_covered": ["缺少 ffmpeg/ImageMagick 時結束碼 3", "-h 說明", "總覽檔名含路徑的拒絕", "影片中間點取不到畫面時的第一格備援", "多頁 TIFF、webp、mkv 等其他副檔名"],
+    "starts_local_server": false,
+    "writes_into_app_dir": "預設會（tests/.work.*），改用 THUMBS_TEST_TMP=/tmp 即可"
+  },
+  "hardcoded_secrets": "無",
+  "supply_chain": "無第三方套件；只依賴系統的 bash、ffmpeg、ImageMagick 6",
+  "known_limits_section5": "無：沒有金鑰、沒有對外主機。",
+  "suspicious_content": "未發現要求放寬權限或跳過檢查的文字。"
+}

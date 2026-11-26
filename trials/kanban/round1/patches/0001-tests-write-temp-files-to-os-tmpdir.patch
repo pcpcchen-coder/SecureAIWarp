@@ -1,0 +1,33 @@
+--- a/test/server.test.js
++++ b/test/server.test.js
+@@ -3,7 +3,7 @@
+ const { test, before, after } = require('node:test');
+ const assert = require('node:assert/strict');
+ const fs = require('fs');
+-const TMP_ROOT = require('path').join(__dirname, '..', '.test-tmp');
++const TMP_ROOT = process.env.KANBAN_TEST_TMP || require('path').join(require('os').tmpdir(), 'local-kanban-test');
+ const path = require('path');
+ const http = require('http');
+ const { createServer } = require('../server');
+--- a/test/store.test.js
++++ b/test/store.test.js
+@@ -3,7 +3,7 @@
+ const { test, beforeEach, afterEach } = require('node:test');
+ const assert = require('node:assert/strict');
+ const fs = require('fs');
+-const TMP_ROOT = require('path').join(__dirname, '..', '.test-tmp');
++const TMP_ROOT = process.env.KANBAN_TEST_TMP || require('path').join(require('os').tmpdir(), 'local-kanban-test');
+ const path = require('path');
+ const { Store, ValidationError, NotFoundError } = require('../lib/store');
+ 
+--- a/test/ui.test.js
++++ b/test/ui.test.js
+@@ -8,7 +8,7 @@
+ const path = require('path');
+ const { createServer } = require('../server');
+ 
+-const TMP_ROOT = path.join(__dirname, '..', '.test-tmp');
++const TMP_ROOT = process.env.KANBAN_TEST_TMP || require('path').join(require('os').tmpdir(), 'local-kanban-test');
+ const CANDIDATES = [
+   process.env.CHROME_PATH,
+   '/usr/bin/google-chrome',

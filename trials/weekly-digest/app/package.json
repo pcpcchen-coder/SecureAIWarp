@@ -1,0 +1,20 @@
+{
+  "name": "weekly-digest",
+  "version": "1.0.0",
+  "description": "讀取資料夾中最近七天的會議記錄，用 Claude 整理成 Markdown 週報",
+  "type": "module",
+  "bin": {
+    "weekly-digest": "bin/weekly-digest.js"
+  },
+  "scripts": {
+    "start": "node bin/weekly-digest.js",
+    "test": "node --test \"test/*.test.js\""
+  },
+  "engines": {
+    "node": ">=18.18"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "@anthropic-ai/sdk": "1.14.0"
+  }
+}

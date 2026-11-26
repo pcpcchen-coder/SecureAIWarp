@@ -1,0 +1,30 @@
+{
+  "name": "md-site",
+  "version": "1.0.0",
+  "description": "把 Markdown 筆記資料夾轉成可離線瀏覽的靜態網站",
+  "main": "src/build.js",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "build": "node bin/md-site.js",
+    "example": "node bin/md-site.js example/notes -o example/site --title 範例筆記 --clean"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "gray-matter": "^4.0.3",
+    "highlight.js": "^11.12.0",
+    "marked": "^12.0.2"
+  },
+  "bin": {
+    "md-site": "bin/md-site.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "private": true,
+  "files": [
+    "bin",
+    "src"
+  ]
+}

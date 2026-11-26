@@ -1,0 +1,119 @@
+diff -ruN orig/README.md patched/README.md
+--- orig/README.md	2026-11-26 08:59:00.000000000 +0000
++++ patched/README.md	2026-11-26 10:03:12.324690948 +0000
+@@ -43,7 +43,7 @@
+ ## 資料與匯率
+ 
+ - 資料檔：`data/expenses.db`（可用環境變數 `EXPENSES_DB` 改位置）。備份就複製這個檔案。
+-- 程式只會連到 `https://v6.exchangerate-api.com/v6/<金鑰>/latest/TWD`，一次取得以台幣為基準的全部匯率，快取 6 小時；連不上時沿用上次的快取。
++- 程式只會連到 `https://v6.exchangerate-api.com/v6/latest/TWD`（金鑰以 `Authorization: Bearer` 標頭傳送，不放在網址），一次取得以台幣為基準的全部匯率，快取 6 小時；連不上時沿用上次的快取。
+ - 每筆花費**以新增當下的匯率**換成台幣並保存，之後匯率變動不會改到舊紀錄。
+ - 記錄台幣（TWD）時完全不連網。
+ 
+diff -ruN orig/expenses/rates.py patched/expenses/rates.py
+--- orig/expenses/rates.py	2026-11-26 08:56:45.000000000 +0000
++++ patched/expenses/rates.py	2026-11-26 10:03:12.320676605 +0000
+@@ -1,7 +1,8 @@
+ """匯率取得與快取：使用 exchangerate-api.com v6 API。
+ 
+-API 格式（Standard endpoint）：
+-    GET https://v6.exchangerate-api.com/v6/<API_KEY>/latest/TWD
++API 格式（Standard endpoint，金鑰放在 Authorization 標頭，不放在網址）：
++    GET https://v6.exchangerate-api.com/v6/latest/TWD
++    Authorization: Bearer <API_KEY>
+ 成功回應：
+     {"result": "success", "base_code": "TWD",
+      "time_last_update_unix": 1700000000,
+@@ -31,14 +32,19 @@
+     """無法取得匯率（沒有金鑰、網路錯誤、API 回傳錯誤、不支援的幣別）。"""
+ 
+ 
+-def build_url(api_key: str, base: str = BASE_CURRENCY) -> str:
+-    return f"{API_BASE}/{urllib.parse.quote(api_key, safe='')}/latest/{base}"
++def build_url(base: str = BASE_CURRENCY) -> str:
++    return f"{API_BASE}/latest/{urllib.parse.quote(base, safe='')}"
+ 
+ 
+-def http_get_json(url: str) -> dict:
++def auth_headers(api_key: str) -> dict:
++    return {"Authorization": f"Bearer {api_key}"}
++
++
++def http_get_json(url: str, headers: Optional[dict] = None) -> dict:
+     """預設的 HTTP 取得函式（只用標準函式庫）。測試時會替換掉。"""
+     req = urllib.request.Request(url, headers={"Accept": "application/json",
+-                                               "User-Agent": "expenses-app/1.0"})
++                                               "User-Agent": "expenses-app/1.0",
++                                               **(headers or {})})
+     try:
+         with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
+             return json.loads(resp.read().decode("utf-8"))
+@@ -56,7 +62,7 @@
+ 
+ class RateProvider:
+     def __init__(self, db_path: str, api_key: Optional[str],
+-                 fetch: Callable[[str], dict] = http_get_json,
++                 fetch: Callable[..., dict] = http_get_json,
+                  ttl: int = CACHE_TTL_SECONDS,
+                  clock: Callable[[], float] = time.time):
+         self.db_path = db_path
+@@ -93,7 +99,7 @@
+     def _fetch_remote(self) -> dict:
+         if not self.api_key:
+             raise RateError("尚未設定 EXCHANGERATE_API_KEY")
+-        data = self.fetch(build_url(self.api_key))
++        data = self.fetch(build_url(), headers=auth_headers(self.api_key))
+         if not isinstance(data, dict):
+             raise RateError("匯率 API 回應格式錯誤")
+         if data.get("result") != "success":
+diff -ruN orig/tests/test_app.py patched/tests/test_app.py
+--- orig/tests/test_app.py	2026-11-26 08:58:25.000000000 +0000
++++ patched/tests/test_app.py	2026-11-26 10:03:12.321063263 +0000
+@@ -6,7 +6,7 @@
+ 
+ from expenses import rates as rates_mod
+ from expenses.app import create_app, load_dotenv
+-from expenses.rates import RateError, RateProvider, build_url
++from expenses.rates import RateError, RateProvider, auth_headers, build_url
+ from expenses.storage import Store, summarize
+ 
+ # 依照 exchangerate-api.com v6 /latest/TWD 真實回應格式的假資料
+@@ -25,10 +25,11 @@
+ 
+ class FakeFetch:
+     def __init__(self, response=FAKE_OK, exc=None):
+-        self.response, self.exc, self.urls = response, exc, []
++        self.response, self.exc, self.urls, self.headers = response, exc, [], []
+ 
+-    def __call__(self, url):
++    def __call__(self, url, headers=None):
+         self.urls.append(url)
++        self.headers.append(headers or {})
+         if self.exc:
+             raise self.exc
+         return self.response
+@@ -59,7 +60,14 @@
+ # ---------- rates ----------
+ 
+ def test_build_url_matches_v6_format():
+-    assert build_url("abc123") == "https://v6.exchangerate-api.com/v6/abc123/latest/TWD"
++    assert build_url() == "https://v6.exchangerate-api.com/v6/latest/TWD"
++
++
++def test_api_key_sent_in_header_not_url(db):
++    f = FakeFetch()
++    RateProvider(db, "abc123", fetch=f).twd_per_unit("JPY")
++    assert "abc123" not in f.urls[0]
++    assert f.headers[0] == auth_headers("abc123") == {"Authorization": "Bearer abc123"}
+ 
+ 
+ def test_twd_per_unit_conversion(db):
+@@ -123,7 +131,7 @@
+         raise urllib.error.URLError("no network")
+     monkeypatch.setattr(rates_mod.urllib.request, "urlopen", boom)
+     with pytest.raises(RateError, match="無法連線"):
+-        rates_mod.http_get_json("https://v6.exchangerate-api.com/v6/k/latest/TWD")
++        rates_mod.http_get_json("https://v6.exchangerate-api.com/v6/latest/TWD", headers=auth_headers("k"))
+ 
+ 
+ # ---------- storage / summary ----------

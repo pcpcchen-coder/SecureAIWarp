@@ -1,0 +1,53 @@
+# weekly-digest 的權限宣告（由 warp draft 初稿收緊而來）
+warp: "0.1"
+app:
+  name: weekly-digest
+  display_name: weekly-digest 會議週報
+  version: 1.0.0
+  kind: cli
+  entry:
+    - sh
+    - -c
+    - node bin/weekly-digest.js "$WARP_PICK_NOTES" -o /dev/stdout
+  digest: sha256:84da9f4529f3a53c46dd2c874319722c45072b3eeb70d67d1417e85e4f2b4bb7
+runtime:
+  isolation: process
+  resources:
+    cpu: 1
+    memory: 512Mi
+    pids: 128
+    disk: 1Gi
+  spawn: none
+  background: false
+files:
+  - path: ${USER_PICK:notes}
+    mode: ro
+    purpose: 讀取你指定的會議記錄資料夾裡最近七天的文字記錄，只讀不改。
+network:
+  egress:
+    - host: api.anthropic.com
+      port: 443
+      purpose: 把會議記錄內容送到 Anthropic 的 Claude 服務，請它整理成週報。
+secrets:
+  - name: ANTHROPIC_API_KEY
+    provided_by: recipient
+    bind:
+      host: api.anthropic.com
+      inject:
+        header: authorization
+    visibility: gate-only
+    purpose: 你自己的 Anthropic 金鑰，只用來向 Anthropic 證明身分並付費，程式本身看不到真值。
+exceptions: []
+evidence:
+  - grant: files[0]
+    observed_in: .warp/evidence/trace-0006.json
+    triggered_by: sh -c 'node bin/weekly-digest.js "$WARP_PICK_NOTES" -o /dev/stdout'
+  - grant: network.egress[0]
+    observed_in: .warp/evidence/trace-0006.json
+    triggered_by: sh -c 'node bin/weekly-digest.js "$WARP_PICK_NOTES" -o /dev/stdout'
+  - grant: secrets[0]
+    observed_in: .warp/evidence/trace-0006.json
+    triggered_by: sh -c 'node bin/weekly-digest.js "$WARP_PICK_NOTES" -o /dev/stdout'
+denied_by_design:
+  - behavior: 連到本機 127.0.0.1 的任意連接埠（只有自動測試的假 API 會這樣做）
+    reason: 正式使用只需要連 api.anthropic.com；連本機位址可能碰到使用者電腦上的其他服務，因此不開放。

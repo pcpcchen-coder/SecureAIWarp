@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "photo-renamer"
+version = "0.1.0"
+description = "Rename photos by capture time (EXIF), with preview and undo."
+requires-python = ">=3.9"
+dependencies = ["Pillow>=9.0"]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[project.scripts]
+photo-renamer = "photo_renamer.cli:main"
+
+[tool.setuptools]
+packages = ["photo_renamer"]

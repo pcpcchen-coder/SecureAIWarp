@@ -1,0 +1,39 @@
+{
+  "survey_by": "installer agent (manual; warp survey not implemented)",
+  "app": {
+    "name": "linkcheck",
+    "kind": "cli",
+    "language": "Go 1.24 (standard library only, go.mod has no requires)",
+    "entry_point": "main.go (package main); prebuilt binary ./linkcheck",
+    "start_command": "/app/linkcheck [flags] <directory>",
+    "version_source": "none found (no version in go.mod / source; User-Agent says linkcheck/1.0)"
+  },
+  "files": {
+    "reads": "every .md/.markdown file under the directory given as argument (and -root); os.Stat of link targets inside it. Targets of relative links like ../x.md may resolve outside the scanned directory (inside the shell those simply do not exist).",
+    "writes": "none (results go to stdout/stderr only)",
+    "suggested_grant": "${USER_PICK:docs} read-only"
+  },
+  "network": {
+    "egress": "HEAD then GET to every http(s) URL found in the user's Markdown files; hosts depend entirely on user data (Known limitation, section 5). Uses HTTPS_PROXY/HTTP_PROXY via Go default transport.",
+    "fixed_hosts": [],
+    "telemetry_or_update_checks": "none found in source",
+    "ingress": "none in the application; tests start temporary httptest servers on random 127.0.0.1 ports"
+  },
+  "env_vars": ["HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY (via net/http ProxyFromEnvironment)"],
+  "secrets": [],
+  "model_sdk": "none",
+  "ai_tools": [],
+  "tests": {
+    "command": "go test ./... (inside shell: env HOME=/tmp GOCACHE=/tmp/go-build /usr/local/go/bin/go test -count=1 -v ./...)",
+    "covers": ["slugify / anchors", "link extraction", "classification", "internal link checks", "external checks against local httptest servers (200/404/410/500/redirect/no-HEAD/flaky/timeout/refused)", "concurrency limit", "CLI output and exit codes"],
+    "not_covered": ["real external hosts", "-root flag via CLI", "-ext flag"],
+    "starts_local_servers": true,
+    "writes_app_dir": false,
+    "notes": "go is at /usr/local/go/bin/go (not on PATH inside the shell); test temp dirs go to TMPDIR=/tmp"
+  },
+  "hardcoded_keys": "none found",
+  "suspicious_packages": "none (no third-party dependencies)",
+  "suspicious_text": "none found in README, comments or example data",
+  "supply_chain_notes": "Prebuilt binary ./linkcheck (9.2MB, go1.24.7, listed in .gitignore) is what app.entry runs. A rebuild from the same source on this host gives a different sha256 (embedded build paths), so it could not be confirmed that the binary matches the source.",
+  "known_limitations_hit": ["external hosts depend on user data (link checker) - section 5 row 2"]
+}

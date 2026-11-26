@@ -1,0 +1,51 @@
+{
+  "app": { "name": "weekly-digest", "version": "1.0.0", "runtime": "node >=18.18" },
+  "type": {
+    "description": "本機命令列工具（CLI），單次執行、讀取使用者指定資料夾內的會議記錄、呼叫雲端模型 API（Anthropic Messages，使用者自備金鑰）、寫出一個 Markdown 檔",
+    "scenario_letters": "未對照：操作手冊要求對照 docs/06-scenarios.md 的 A–I，但該文件不在可讀範圍內",
+    "distribution": { "audience": "特定對象（幾位朋友）", "usage": "在自己的機器上執行", "model_cost": "使用者自備金鑰" }
+  },
+  "entry": "bin/weekly-digest.js",
+  "start_command": "node bin/weekly-digest.js <會議記錄資料夾> [-o <輸出檔>]",
+  "test_command": "npm test  (= node --test \"test/*.test.js\")",
+  "files": {
+    "read": [
+      { "what": "使用者指定的會議記錄資料夾（.txt/.md/.markdown，可選遞迴）", "source": "src/notes.js collectNotes/listFiles", "mode": "ro" },
+      { "what": "應用本身與 node_modules", "mode": "ro" },
+      { "what": "SDK 預設憑證鏈設定檔：$ANTHROPIC_CONFIG_DIR 或 $XDG_CONFIG_HOME/anthropic 或 ~/.config/anthropic/{active_config,configs/*.json,credentials/*.json}", "source": "node_modules/@anthropic-ai/sdk/core/credentials.js", "note": "只有在沒有 ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN 時才會讀；本工具要求設定 ANTHROPIC_API_KEY，不需要授權" }
+    ],
+    "write": [
+      { "what": "週報輸出檔：-o 指定的路徑，或目前目錄下的 weekly-digest-<日期>.md；會 mkdir -p 其父目錄", "source": "src/cli.js main" }
+    ],
+    "temp": [ "測試會在 os.tmpdir() 建立/刪除 weekly-digest-test-* 暫存資料夾" ]
+  },
+  "network": {
+    "outbound": [
+      { "host": "api.anthropic.com", "port": 443, "path": "POST /v1/messages (SSE 串流)", "secret": "ANTHROPIC_API_KEY（SDK 1.x 以 Authorization: Bearer 或 x-api-key 傳送）" }
+    ],
+    "inbound": [
+      { "what": "只有測試：test/helpers.js startMockApi 在 127.0.0.1:<隨機埠> 監聽假 API，並由同一行程連線" }
+    ],
+    "base_url_override": "ANTHROPIC_BASE_URL 環境變數會讓 SDK 改連別的主機；正式使用不應設定"
+  },
+  "env": {
+    "used": ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN（替代）", "ANTHROPIC_BASE_URL（覆寫主機）", "ANTHROPIC_LOG", "ANTHROPIC_CUSTOM_HEADERS", "ANTHROPIC_PROFILE / ANTHROPIC_CONFIG_DIR 等 SDK 憑證鏈變數", "HOME / XDG_CONFIG_HOME（SDK 憑證鏈）"],
+    "required": ["ANTHROPIC_API_KEY"]
+  },
+  "model_sdk": { "package": "@anthropic-ai/sdk", "version": "1.14.0", "features": ["messages.stream", "beta.messages.stream with betas server-side-fallback-2026-07-01, fallbacks: default"], "default_model": "claude-opus-5-5" },
+  "tools": { "llm_tool_definitions": "無（不使用 tool use）", "side_effects": ["寫出一個本機 Markdown 檔"] },
+  "hardcoded_secrets": "未發現（測試中的 sk-ant-test / bad 為假值）",
+  "dependencies": {
+    "direct": ["@anthropic-ai/sdk 1.14.0"],
+    "transitive": ["@opentelemetry/api 1.10.0", "json-schema-to-ts 3.1.1", "@babel/runtime 7.29.15", "ts-algebra 2.0.0", "standardwebhooks 1.3.0", "@stablelib/base64 1.0.1", "fast-sha256 1.3.0"],
+    "notes": [
+      "全部 resolved 自 registry.npmjs.org，皆為常見的公開套件；離線環境無法向官方套件庫查驗存在性與完整性",
+      "package.json 寫 \"1.14.0\"（固定），package-lock.json 根項目寫 \"^1.14.0\"，兩者不一致（README 宣稱版本固定）"
+    ]
+  },
+  "tests": {
+    "command": "npm test",
+    "covers": ["分段/分組 (chunk)", "檔名日期解析與資料夾篩選 (notes)", "map-reduce 流程（假 ask）(digest)", "CLI 端對端：真 SDK 對 127.0.0.1 假 API，含 beta/fallbacks、拒答、截斷、401、無金鑰、--dry-run、參數驗證"],
+    "not_covered": ["對真正的 api.anthropic.com 連線（測試全部改用 baseURL=127.0.0.1）", "預設輸出路徑 weekly-digest-<日期>.md 寫在目前目錄", "--recursive 走 CLI 的路徑（只有 notes 單元測試）"]
+  }
+}

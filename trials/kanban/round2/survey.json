@@ -1,0 +1,46 @@
+{
+  "app": "local-kanban",
+  "version": "1.0.0",
+  "kind": "local-web",
+  "entry": "server.js",
+  "start_command": "npm start (= node server.js); in shell: env KANBAN_DATA_FILE=${APP_DATA}/board.json node server.js",
+  "runtime": "Node.js >=22, no runtime dependencies",
+  "files": [
+    {"path": "./data/board.json", "access": "rw", "note": "default data file; configurable via KANBAN_DATA_FILE (documented in README) -> ${APP_DATA}/board.json"},
+    {"path": "<datafile>.<pid>.tmp", "access": "w", "note": "atomic write temp file next to data file"},
+    {"path": "<datafile>.corrupt-<ts>", "access": "w", "note": "backup of unparsable data file"},
+    {"path": "./public/*", "access": "r", "note": "static frontend"},
+    {"path": "./.test-tmp/", "access": "rw", "note": "tests only; hardcoded via __dirname, no setting -> EROFS in shell; patch .warp/patches/test-tmpdir.patch"}
+  ],
+  "network": {
+    "ingress": [{"port": 3000, "host": "127.0.0.1", "note": "PORT/HOST env vars; Host header checked against localhost/127.0.0.1/[::1]"}],
+    "egress": [],
+    "egress_note": "no outbound hosts found in app code; frontend CSP default-src 'self'"
+  },
+  "env_vars": ["PORT", "HOST", "KANBAN_DATA_FILE", "CHROME_PATH (tests)"],
+  "secrets": [],
+  "model_sdks": [],
+  "ai_tools": [],
+  "hardcoded_keys": [],
+  "tests": {
+    "command": "node --test \"test/*.test.js\" (npm test)",
+    "count": 23,
+    "files": {
+      "test/helpers.test.js": 3,
+      "test/server.test.js": "7 (starts temporary servers on ephemeral ports on 127.0.0.1)",
+      "test/store.test.js": 12,
+      "test/ui.test.js": "1 (puppeteer-core + Chrome at /usr/bin/google-chrome; host wrapper execs /opt/pw-browsers/chromium, absent in shell)"
+    },
+    "writes_app_dir": true,
+    "untested": ["npm start entry itself (require.main branch): env var handling of PORT/HOST/KANBAN_DATA_FILE"]
+  },
+  "supply_chain": {
+    "dev_dependencies": ["puppeteer-core 25.17.0 (+ transitive deps, all from registry.npmjs.org, no install scripts)"],
+    "suspicious": []
+  },
+  "known_limits_section5": [
+    "tests write to app dir with no configurable path -> patch required",
+    "browser test needs Chromium outside system dirs (/opt/pw-browsers)"
+  ],
+  "suspicious_content": []
+}

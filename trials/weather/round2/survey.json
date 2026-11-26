@@ -1,0 +1,35 @@
+{
+  "app": "weather-cli",
+  "version": "0.1.0",
+  "kind": "cli",
+  "entry": "weather_cli/__main__.py -> weather_cli.cli:main",
+  "start_command": ["python3", "-m", "weather_cli"],
+  "start_command_notes": ".venv/bin/weather 是 console script，shebang 寫死主機路徑，殼內不可用；程式只用標準函式庫，殼內 /usr/local/bin/python3 可直接執行。.venv 的 editable 安裝指向另一個目錄（apps/weather），殼內靠 cwd=/app 匯入本目錄的 weather_cli。",
+  "files": [
+    {"path": "$XDG_CONFIG_HOME/weather-cli/favorites.json 或 ~/.config/weather-cli/favorites.json", "op": "rw", "maps_to": "${APP_DATA}（HOME=/warp/data）"},
+    {"path": "$XDG_CACHE_HOME/weather-cli/http_cache.json 或 ~/.cache/weather-cli/http_cache.json", "op": "rw", "maps_to": "${APP_CACHE}（XDG_CACHE_HOME=/warp/cache）"},
+    {"path": "$WEATHER_HOME（選用，覆蓋上面兩者）", "op": "rw", "notes": "正式入口不設定，沿用核心提供的 HOME/XDG_CACHE_HOME"}
+  ],
+  "hosts": [
+    {"host": "geocoding-api.open-meteo.com", "port": 443, "use": "地名轉座標（HTTPS GET）"},
+    {"host": "api.open-meteo.com", "port": 443, "use": "天氣預報（HTTPS GET）"}
+  ],
+  "hosts_depend_on_user_data": false,
+  "env_vars": ["WEATHER_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "HOME", "HTTPS_PROXY（urllib 自動使用）"],
+  "secrets": [],
+  "model_sdks": [],
+  "ai_tools": [],
+  "hardcoded_keys": [],
+  "dependencies": {"runtime": [], "test": ["pytest>=7（.venv 內 pytest 9.2.0、pluggy、iniconfig、packaging、pygments，皆為 PyPI 常見套件）"]},
+  "suspicious_content": [],
+  "tests": {
+    "command": [".venv/bin/python", "-m", "pytest", "-q"],
+    "count": 31,
+    "network": "完全不連網：fetch 以 FakeFetch 取代，urlopen 被 monkeypatch 擋掉",
+    "writes_app_dir": "只有 pytest 自己的 .pytest_cache（唯讀時僅警告）；測試資料寫在 pytest tmp_path（殼內 /tmp）",
+    "starts_local_server": false,
+    "covered": ["地名查詢網址與解析", "中文別名", "找不到城市", "預報網址參數", "API 錯誤", "快取命中/過期/略過/錯誤不快取", "http_get_json 成功/HTTP 錯誤/網路錯誤（替身）", "CLI 查詢、多字城市、常用城市增刪列、清快取、壞檔容錯、輸出格式"],
+    "not_covered": ["真實 HTTP 連線（由手動執行 python3 -m weather_cli 台北 / --add 東京 側錄）"]
+  },
+  "section5_limits": "無：無金鑰；對外主機固定兩個，不取決於使用者資料"
+}

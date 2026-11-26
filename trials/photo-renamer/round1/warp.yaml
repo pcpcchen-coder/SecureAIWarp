@@ -1,0 +1,31 @@
+# 由 warp draft 依側錄紀錄產生的宣告初稿。
+# 請逐條收緊、填寫每條授權的 purpose（一句人話），再執行 warp lint。
+warp: "0.1"
+app:
+  name: photo-renamer
+  display_name: photo-renamer
+  version: 0.1.0
+  kind: cli
+  entry:
+    - .venv/bin/python
+    - -m
+    - photo_renamer
+  digest: sha256:5ec2751aad611fd5cb707a699a4607e438f02341b07f89f3603810b4371d666b
+runtime:
+  isolation: process
+  resources:
+    cpu: 1
+    memory: 512Mi
+    pids: 128
+    disk: 1Gi
+  spawn: none
+  background: false
+files:
+  - path: ${USER_PICK:photos}
+    mode: rw
+    purpose: 讀取你選定資料夾裡的照片拍攝時間，並在同一個資料夾裡替照片改名、記下改名紀錄以便復原
+exceptions: []
+evidence:
+  - grant: files[0]
+    observed_in: .warp/evidence/trace-0003.json
+    triggered_by: sh -c '.venv/bin/python -m photo_renamer rename -y "$WARP_PICK_PHOTOS" && .venv/bin/python -m photo_renamer undo "$WARP_PICK_PHOTOS"'

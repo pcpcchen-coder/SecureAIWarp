@@ -1,0 +1,39 @@
+{
+  "time": "2026-11-26T09:34:12Z",
+  "manifest_sha256": "faf7cf100584634b1d0e7c2c630979bba4ab9a7755041404cc5b4b7ff8dd4f70",
+  "app_digest": "sha256:84da9f4529f3a53c46dd2c874319722c45072b3eeb70d67d1417e85e4f2b4bb7",
+  "command": [
+    "sh",
+    "-c",
+    "node bin/weekly-digest.js \"$WARP_PICK_NOTES\" -o /dev/stdout"
+  ],
+  "exit_code": 0,
+  "denied": 0,
+  "identity": "root",
+  "resources": [
+    {
+      "resource": "memory",
+      "limit": "512Mi",
+      "scope": "shell",
+      "mechanism": "cgroup v1"
+    },
+    {
+      "resource": "pids",
+      "limit": "128",
+      "scope": "shell",
+      "mechanism": "cgroup v1"
+    },
+    {
+      "resource": "disk",
+      "limit": "1Gi",
+      "scope": "file",
+      "mechanism": "RLIMIT_FSIZE＋/tmp 容量"
+    },
+    {
+      "resource": "cpu",
+      "limit": "1",
+      "scope": "none",
+      "mechanism": "（尚未實作）"
+    }
+  ]
+}

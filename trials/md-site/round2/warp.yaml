@@ -1,0 +1,42 @@
+# 由 warp draft 依側錄紀錄產生的宣告初稿。
+# 請逐條收緊、填寫每條授權的 purpose（一句人話），再執行 warp lint。
+# ⚠ app.entry 取自最後一次側錄的指令（含參數），app.kind 暫填 cli：請確認或改正。
+warp: "0.1"
+app:
+  name: md-site
+  display_name: 筆記轉網站
+  version: 1.0.0
+  kind: cli
+  entry:
+    - node
+    - bin/md-site.js
+    - ${USER_PICK:notes}
+    - -o
+    - ${USER_PICK:site}
+    - --title
+    - 我的筆記
+  digest: sha256:d50b7970892a8deb158e0715b3dc5fa246f1c8013ea303685fc33cb9f5360062
+runtime:
+  isolation: process
+  resources:
+    cpu: 1
+    memory: 512Mi
+    pids: 128
+    disk: 1Gi
+  spawn: none
+  background: false
+files:
+  - path: ${USER_PICK:notes}
+    mode: ro
+    purpose: 讀取你選定的 Markdown 筆記資料夾（只讀，不會改動筆記）
+  - path: ${USER_PICK:site}
+    mode: rw
+    purpose: 把產生的網頁寫進你選定的輸出資料夾
+exceptions: []
+evidence:
+  - grant: files[0]
+    observed_in: .warp/evidence/trace-0005.json
+    triggered_by: node bin/md-site.js '${USER_PICK:notes}' -o '${USER_PICK:site}' --title '我的筆記'
+  - grant: files[1]
+    observed_in: .warp/evidence/trace-0005.json
+    triggered_by: node bin/md-site.js '${USER_PICK:notes}' -o '${USER_PICK:site}' --title '我的筆記'

@@ -1,0 +1,70 @@
+{
+  "survey_version": "0.1",
+  "surveyed_by": "agent (warp survey 尚未實作，人工盤點)",
+  "app": {
+    "name": "local-kanban",
+    "version": "1.0.0",
+    "summary": "本機看板待辦工具：Node.js HTTP 伺服器 + 瀏覽器前端，無 AI、無模型、無對外連線",
+    "scenario": {
+      "guess": "本機執行的網頁型工具（伺服器只監聽 127.0.0.1，使用者用瀏覽器操作）",
+      "letters": null,
+      "note": "手冊要求對照 docs/06-scenarios.md 的 A–I，但本次不允許讀取該文件，因此未填代號"
+    },
+    "entry_points": ["server.js"],
+    "start_command": ["node", "server.js"],
+    "start_command_documented": "npm start（= node server.js）；殼內沒有 npm",
+    "runtime": "Node.js >= 22，伺服器沒有第三方相依套件"
+  },
+  "files": [
+    {"path": "./data/board.json", "op": "read/write", "source": "server.js DEFAULT_DATA_FILE、lib/store.js _save/_load", "note": "預設寫在應用目錄內；可用環境變數 KANBAN_DATA_FILE 改位置。寫入方式：同目錄暫存檔 board.json.<pid>.tmp 再改名"},
+    {"path": "<資料檔>.corrupt-<時間戳>", "op": "write", "source": "lib/store.js _load", "note": "只在資料檔損毀時建立備份"},
+    {"path": "./public/*", "op": "read", "source": "server.js serveStatic", "note": "應用自身的靜態檔"},
+    {"path": "./.test-tmp/", "op": "read/write", "source": "test/*.test.js TMP_ROOT（寫死在應用目錄內）", "note": "只有測試會用；殼內應用目錄唯讀，測試因此無法執行"}
+  ],
+  "hosts": {
+    "egress": [],
+    "ingress": [{"bind": "127.0.0.1", "port": 3000, "source": "server.js（PORT 環境變數可改，HOST 預設 127.0.0.1）"}],
+    "note": "程式碼中沒有任何對外網址；server.js 只建立本機 HTTP 伺服器"
+  },
+  "env_vars": [
+    {"name": "PORT", "default": "3000"},
+    {"name": "HOST", "default": "127.0.0.1", "note": "README 警告不要改成 0.0.0.0"},
+    {"name": "KANBAN_DATA_FILE", "default": "./data/board.json"},
+    {"name": "CHROME_PATH", "note": "只有瀏覽器測試使用"}
+  ],
+  "secrets": [],
+  "hardcoded_keys": [],
+  "model_sdks": [],
+  "tool_definitions": [],
+  "child_processes": [{"what": "Chrome/Chromium（puppeteer-core 啟動）", "where": "只在 test/ui.test.js", "note": "正式啟動指令不會產生子行程"}],
+  "dependencies": {
+    "runtime": [],
+    "dev": [{"name": "puppeteer-core", "version": "25.17.0", "registry": "registry.npmjs.org"}],
+    "lockfile_packages": 26,
+    "all_resolved_from": "https://registry.npmjs.org",
+    "install_scripts": [],
+    "suspicious_packages": [],
+    "note": "未連網核對套件庫；僅檢查 lockfile 的 resolved 來源與 install script"
+  },
+  "tests": {
+    "command": ["node", "--test", "test/*.test.js"],
+    "documented_command": "npm test",
+    "count": 23,
+    "files": {
+      "test/helpers.test.js": "3 個：標籤解析、日期字串、逾期判斷（純函式，不寫檔）",
+      "test/server.test.js": "7 個：靜態檔、路徑穿越、CRUD 與搜尋、重啟後保留、錯誤處理、請求大小上限、Host 檢查（寫 .test-tmp）",
+      "test/store.test.js": "12 個：資料層（寫 .test-tmp）",
+      "test/ui.test.js": "1 個：無頭 Chrome 端對端（寫 .test-tmp；找不到瀏覽器時略過）"
+    },
+    "not_covered": [
+      "以正式啟動指令（node server.js）啟動並使用預設 / KANBAN_DATA_FILE 資料檔",
+      "PORT、HOST 環境變數",
+      "損毀檔備份在正式資料位置的行為"
+    ]
+  },
+  "suspicious_content": [],
+  "blockers": [
+    "應用預設把資料寫在自己的目錄（./data），殼內應用目錄唯讀；且核心拒絕掛載與應用目錄重疊的資料夾",
+    "測試把暫存檔寫死在 ./.test-tmp，殼內無法建立；需要修改測試（修補檔見 .warp/patches/），須人決定是否套用"
+  ]
+}

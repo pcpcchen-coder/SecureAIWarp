@@ -1,0 +1,36 @@
+# 暫行宣告（離線模式）：外部網址檢查的對外主機取決於使用者文件內容，屬已知限制，
+# 要不要開放、開放哪些主機必須由人決定（見回報）。在人決定之前，這份宣告只授權離線檢查。
+warp: "0.1"
+app:
+  name: linkcheck
+  display_name: linkcheck（Markdown 連結檢查）
+  version: 1.0.0
+  kind: cli
+  entry:
+    - /app/linkcheck
+    - -offline
+    - ${USER_PICK:docs}
+  digest: sha256:291ab14181699d4057de98e3eaa0c6f5f5576e7a0688e07f108a84fd30bf95be
+runtime:
+  isolation: process
+  resources:
+    cpu: 1
+    memory: 512Mi
+    pids: 128
+    disk: 1Gi
+  spawn: none
+  background: false
+files:
+  - path: ${USER_PICK:docs}
+    mode: ro
+    purpose: 讀取你選定的文件資料夾裡的 Markdown 檔，檢查裡面的連結（只讀不改）
+exceptions: []
+evidence:
+  - grant: files[0]
+    observed_in: .warp/evidence/trace-0004.json
+    triggered_by: /app/linkcheck -offline '${USER_PICK:docs}'
+denied_by_design:
+  - behavior: 對外連線 go.dev:443（檢查文件中的外部網址；實際會連往文件裡出現的任何網站）
+    reason: 要連的網站取決於使用者文件內容，無法事先列舉；核心只能放行固定主機。是否開放、開放哪些主機待人決定，暫時只做離線檢查
+  - behavior: 測試執行時在殼內 127.0.0.1 隨機埠開啟的臨時測試伺服器（側錄到 41091、42613 埠）
+    reason: 這是測試用的假伺服器，應用本身不提供任何連線服務

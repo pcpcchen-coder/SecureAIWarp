@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>我的看板</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1>我的看板</h1>
+    <input id="search" type="search" placeholder="搜尋標題、描述或標籤…" aria-label="搜尋卡片" autocomplete="off">
+    <button id="add-btn" class="primary" type="button">＋ 新增卡片</button>
+  </header>
+
+  <p id="status" class="status" role="status" hidden></p>
+
+  <main class="board">
+    <section class="column" data-column="todo">
+      <h2>待辦 <span class="count" data-count="todo">0</span></h2>
+      <div class="cards" data-column="todo"></div>
+    </section>
+    <section class="column" data-column="doing">
+      <h2>進行中 <span class="count" data-count="doing">0</span></h2>
+      <div class="cards" data-column="doing"></div>
+    </section>
+    <section class="column" data-column="done">
+      <h2>完成 <span class="count" data-count="done">0</span></h2>
+      <div class="cards" data-column="done"></div>
+    </section>
+  </main>
+
+  <dialog id="card-dialog">
+    <form id="card-form" method="dialog">
+      <h3 id="dialog-title">新增卡片</h3>
+      <label>標題
+        <input name="title" required maxlength="200" autocomplete="off">
+      </label>
+      <label>描述
+        <textarea name="description" rows="4" maxlength="5000"></textarea>
+      </label>
+      <label>標籤（以逗號分隔）
+        <input name="tags" placeholder="例如：工作, 緊急" autocomplete="off">
+      </label>
+      <div class="row">
+        <label>到期日
+          <input name="dueDate" type="date">
+        </label>
+        <label>欄位
+          <select name="column">
+            <option value="todo">待辦</option>
+            <option value="doing">進行中</option>
+            <option value="done">完成</option>
+          </select>
+        </label>
+      </div>
+      <p id="form-error" class="form-error" hidden></p>
+      <div class="actions">
+        <button type="button" id="cancel-btn">取消</button>
+        <button type="submit" class="primary">儲存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <template id="card-template">
+    <article class="card" draggable="true">
+      <div class="card-head">
+        <h4 class="card-title"></h4>
+        <div class="card-buttons">
+          <button type="button" class="icon edit" title="編輯" aria-label="編輯">✎</button>
+          <button type="button" class="icon delete" title="刪除" aria-label="刪除">✕</button>
+        </div>
+      </div>
+      <p class="card-desc"></p>
+      <div class="card-meta">
+        <ul class="tags"></ul>
+        <span class="due"></span>
+      </div>
+    </article>
+  </template>
+
+  <script src="/helpers.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

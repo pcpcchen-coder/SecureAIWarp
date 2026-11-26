@@ -1,0 +1,44 @@
+{
+  "app": { "name": "md-site", "version": "1.0.0", "runtime": "Node.js >=18" },
+  "scenario": ["A: 本機命令列工具（讀取使用者指定的資料夾，寫出到使用者指定的資料夾）"],
+  "scenario_note": "未能讀取 docs/06-scenarios.md（任務限制不得讀取該目錄），A–I 對照為推測；此工具不含 AI/模型呼叫。",
+  "entry": "node bin/md-site.js <筆記資料夾> -o <輸出資料夾> [--title T] [--clean] [--strict] [-q]",
+  "start_command": "node bin/md-site.js <筆記資料夾> -o <輸出資料夾>",
+  "test_command": "npm test  (= node --test test/*.test.js)",
+  "files": {
+    "read": [
+      "使用者指定的輸入資料夾（遞迴讀取所有檔案；略過隱藏資料夾與 node_modules）",
+      "應用自身：src/style.css、node_modules/highlight.js/styles/github.min.css、github-dark.min.css、node_modules 內的程式碼"
+    ],
+    "write": [
+      "使用者指定的輸出資料夾（建立子資料夾、寫 HTML、複製圖片等非 Markdown 檔、assets/）",
+      "--clean 時遞迴刪除整個輸出資料夾（fs.rmSync recursive force）"
+    ],
+    "tests_only": [
+      "os.tmpdir() 下的 md-site-test-* 暫存資料夾（mkdtemp，測試結束刪除）"
+    ]
+  },
+  "hosts": [],
+  "hosts_note": "程式碼中沒有任何網路呼叫；產生的網站不載入外部 CDN。範例中的 https://nodejs.org/、測試中的 https://example.com/x.md 只是 Markdown 連結文字，不會被連線。",
+  "env_vars": [],
+  "secrets": [],
+  "model_sdks": [],
+  "tools": [],
+  "subprocess": [
+    "僅測試：spawnSync(process.execPath, [bin/md-site.js ...]) 以子行程執行 CLI"
+  ],
+  "listening_ports": [],
+  "dependencies": {
+    "direct": ["marked@12.0.2", "highlight.js@11.12.0", "gray-matter@4.0.3"],
+    "transitive": ["js-yaml@3.15.2", "argparse@1.0.10", "esprima@4.0.1", "sprintf-js@1.0.3", "section-matter@1.0.0", "extend-shallow@2.0.1", "is-extendable@0.1.1", "kind-of@6.0.3", "strip-bom-string@1.0.0"],
+    "registry": "全部 resolved 自 https://registry.npmjs.org/，無 install/postinstall 腳本",
+    "notes": ["js-yaml@3.15.2：此版號是否存在於官方套件庫無法在離線環境確認（已知 3.x 最後版本約為 3.14.x），列為待人確認"]
+  },
+  "hardcoded_secrets": [],
+  "tests": {
+    "count": 16,
+    "covers": ["多頁產生與資料夾結構", "首頁目錄", "語法上色與樣式表", ".md 連結改寫", "wiki 連結", "圖片/檔案複製", "失效連結", "空白檔名編碼", "index.md 對應", "略過隱藏資料夾與輸出在輸入內", "slug", "標題跳脫", "--clean 與錯誤輸入", "outputPathFor", "CLI 參數解析", "CLI 端對端與結束碼"],
+    "not_covered": ["以使用者真實資料夾（非 os.tmpdir）作為輸入/輸出的實際使用情境", "--title 經由 CLI 傳入", "npm run example"]
+  },
+  "suspicious_content": []
+}

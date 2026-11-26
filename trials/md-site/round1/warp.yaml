@@ -1,0 +1,39 @@
+# 由 warp draft 依側錄紀錄產生的宣告初稿。
+# 請逐條收緊、填寫每條授權的 purpose（一句人話），再執行 warp lint。
+warp: "0.1"
+app:
+  name: md-site
+  display_name: md-site
+  version: 1.0.0
+  kind: cli
+  entry:
+    - node
+    - bin/md-site.js
+    - /warp/pick/notes
+    - -o
+    - /warp/pick/site
+  digest: sha256:d50b7970892a8deb158e0715b3dc5fa246f1c8013ea303685fc33cb9f5360062
+runtime:
+  isolation: process
+  resources:
+    cpu: 1
+    memory: 512Mi
+    pids: 128
+    disk: 1Gi
+  spawn: none
+  background: false
+files:
+  - path: ${USER_PICK:notes}
+    mode: ro
+    purpose: 只讀取你指定的筆記資料夾，把裡面的筆記和圖片轉成網頁，不會改動原本的筆記。
+  - path: ${USER_PICK:site}
+    mode: rw
+    purpose: 把做好的網頁寫進你指定的輸出資料夾；加上 --clean 時會先清空這個資料夾裡的舊內容。
+exceptions: []
+evidence:
+  - grant: files[0]
+    observed_in: .warp/evidence/trace-0002.json
+    triggered_by: node bin/md-site.js /warp/pick/notes -o /warp/pick/site --title '合成筆記'
+  - grant: files[1]
+    observed_in: .warp/evidence/trace-0002.json
+    triggered_by: node bin/md-site.js /warp/pick/notes -o /warp/pick/site --title '合成筆記'

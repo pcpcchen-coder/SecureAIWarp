@@ -1,0 +1,40 @@
+# 由 warp draft 依側錄紀錄產生的宣告初稿。
+# 請逐條收緊、填寫每條授權的 purpose（一句人話），再執行 warp lint。
+warp: "0.1"
+app:
+  name: kanban
+  display_name: 本機看板（Local Kanban）
+  version: 1.0.0
+  kind: local-web
+  entry:
+    - sh
+    - -c
+    - KANBAN_DATA_FILE="$APP_DATA/board.json" exec node server.js
+  digest: sha256:eb9ad5a7e9bb7b15b91b5f22dd5699746201c95ec4ada99965270ec40e69ad0e
+runtime:
+  isolation: process
+  resources:
+    cpu: 1
+    memory: 512Mi
+    pids: 128
+    disk: 1Gi
+  spawn: none
+  background: false
+files:
+  - path: ${APP_DATA}
+    mode: rw
+    purpose: 把你的看板卡片存在這個工具專屬的資料夾裡，關掉再開資料還在。
+network:
+  ingress:
+    - listen: 3000
+      expose: loopback
+      auth: local-token
+      purpose: 在你自己的電腦上開一個只有你的瀏覽器連得到的網頁，讓你操作看板。
+exceptions: []
+evidence:
+  - grant: files[0]
+    observed_in: .warp/evidence/trace-0005.json
+    triggered_by: sh -c 'KANBAN_DATA_FILE="$APP_DATA/board.json" exec node server.js'
+  - grant: network.ingress[0]
+    observed_in: .warp/evidence/trace-0005.json
+    triggered_by: sh -c 'KANBAN_DATA_FILE="$APP_DATA/board.json" exec node server.js'

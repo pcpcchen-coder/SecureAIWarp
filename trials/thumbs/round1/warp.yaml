@@ -1,0 +1,36 @@
+# thumbs 的權限宣告。由 warp draft 初稿收緊而成。
+warp: "0.1"
+app:
+  name: thumbs
+  display_name: thumbs（圖片／影片縮圖與總覽圖）
+  version: 0.1.0
+  kind: cli
+  entry:
+    - bash
+    - -c
+    - ./thumbs.sh "$WARP_PICK_IN" "$WARP_PICK_OUT"
+  digest: sha256:bf7d6b375c7324260a51795f0fd5409d0199a29acd56e58268e81fd13db98291
+runtime:
+  isolation: process
+  resources:
+    cpu: 1
+    memory: 512Mi
+    pids: 128
+    disk: 1Gi
+  spawn: none
+  background: false
+files:
+  - path: ${USER_PICK:in}
+    mode: ro
+    purpose: 讀取你指定資料夾裡的照片和影片，用來做縮圖；只讀不改。
+  - path: ${USER_PICK:out}
+    mode: rw
+    purpose: 把做好的縮圖和總覽圖存到你指定的輸出資料夾。
+exceptions: []
+evidence:
+  - grant: files[0]
+    observed_in: .warp/evidence/trace-0010.json
+    triggered_by: bash -c './thumbs.sh -f -w 200 "$WARP_PICK_IN" "$WARP_PICK_OUT"'
+  - grant: files[1]
+    observed_in: .warp/evidence/trace-0010.json
+    triggered_by: bash -c './thumbs.sh -f -w 200 "$WARP_PICK_IN" "$WARP_PICK_OUT"'

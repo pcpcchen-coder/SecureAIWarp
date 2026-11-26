@@ -1,0 +1,46 @@
+# 旅行記帳的權限宣告（保守版，等人決定匯率功能怎麼處理）。
+# 匯率 API 金鑰放在網址路徑中，核心目前無法授權（見回報「已知限制」）；
+# 在人決定之前，這份宣告不放行匯率 API，外幣花費會存成「未換算」。
+warp: "0.1"
+app:
+  name: expenses
+  display_name: 旅行記帳
+  version: 0.1.0
+  kind: local-web
+  entry:
+    - env
+    - EXPENSES_DB=${APP_DATA}/expenses.db
+    - .venv/bin/python
+    - run.py
+    - --no-browser
+  digest: sha256:93e93061cd7faf8982f7313db78d32edd7e91696a697d1438ef3d784c5d00709
+runtime:
+  isolation: process
+  resources:
+    cpu: 1
+    memory: 512Mi
+    pids: 128
+    disk: 1Gi
+  spawn: none
+  background: false
+files:
+  - path: ${APP_DATA}
+    mode: rw
+    purpose: 保存你的記帳紀錄（本機資料庫檔），關掉重開資料還在
+network:
+  ingress:
+    - listen: 5000
+      expose: loopback
+      auth: local-token
+      purpose: 在你自己的電腦上開記帳網頁，只有你本機的瀏覽器連得到
+exceptions: []
+evidence:
+  - grant: files[0]
+    observed_in: .warp/evidence/trace-0003.json
+    triggered_by: env 'EXPENSES_DB=${APP_DATA}/expenses.db' .venv/bin/python run.py --no-browser
+  - grant: network.ingress[0]
+    observed_in: .warp/evidence/trace-0003.json
+    triggered_by: env 'EXPENSES_DB=${APP_DATA}/expenses.db' .venv/bin/python run.py --no-browser
+denied_by_design:
+  - behavior: 對外連線 v6.exchangerate-api.com:443，金鑰 EXCHANGERATE_API_KEY 放在網址路徑中（/v6/<金鑰>/latest/TWD）
+    reason: 核心目前只能把金鑰注入請求標頭，無法安全授權放在網址裡的金鑰；在作者決定（改用標頭傳送金鑰，或接受不換算）之前不放行。台幣花費不受影響，外幣花費會存成「未換算」

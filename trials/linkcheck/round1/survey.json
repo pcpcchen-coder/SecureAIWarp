@@ -1,0 +1,42 @@
+{
+  "survey_version": "manual-0.1 (warp survey 尚未實作，由安裝 Agent 人工盤點)",
+  "app": {
+    "name": "linkcheck",
+    "language": "Go 1.24（go.mod: go 1.24.7），只用標準函式庫",
+    "kind": "命令列工具（CLI）；docs/06-scenarios.md 未提供給安裝 Agent，A–I 情境代號無法對照",
+    "entry_points": ["main.go: main() -> run()"],
+    "launch": "./linkcheck [flags] <資料夾>（殼內使用者資料夾掛在 /warp/pick/<名稱>）",
+    "build": "go build -o linkcheck .",
+    "prebuilt_binary": {
+      "path": "linkcheck",
+      "note": "倉庫附帶已編譯的執行檔（.gitignore 中列為 /linkcheck）。以 go1.24.7 從原始碼重建，sha256 完全相同：03cff0cd6c238ade060aea92134b71a223fcd37224698abdba18abe87b097fde"
+    }
+  },
+  "files": {
+    "reads": ["使用者指定資料夾下所有 .md / .markdown（遞迴，略過 . 開頭資料夾與 node_modules）", "站內連結指向的檔案（僅 stat / 讀取 Markdown 以找錨點）；-root 可指定另一個資料夾"],
+    "writes": [],
+    "note": "應用本身不寫任何檔案；go test 期間 Go 工具鏈會寫建置快取（$XDG_CACHE_HOME/go-build）與遙測（$HOME/.config/go/telemetry）"
+  },
+  "network": {
+    "egress": "對 Markdown 內出現的每個 http/https 網址發出 HEAD（失敗時 GET），跟隨重新導向。目的主機完全由使用者文件內容決定，無法事先列舉。",
+    "proxy": "使用 HTTPS_PROXY / HTTP_PROXY（http.Client 預設 Transport）",
+    "hardcoded_hosts": [],
+    "user_agent": "linkcheck/1.0 (+markdown link checker)",
+    "ingress": "應用本身不監聽；只有測試用 net/http/httptest 在 127.0.0.1 的隨機埠起伺服器"
+  },
+  "env_vars": ["HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY（經由 Go 標準函式庫）"],
+  "secrets": [],
+  "hardcoded_keys": "未發現",
+  "model_sdk": "無",
+  "tool_definitions": "無（非 Agent 工具）",
+  "dependencies": {
+    "third_party": [],
+    "suspicious_packages": "無（無第三方相依套件）"
+  },
+  "tests": {
+    "command": "go test ./...（殼內 PATH 沒有 go，需寫 /usr/local/go/bin/go）",
+    "covers": ["連結擷取（extract）", "錨點產生（anchors）", "站內連結檢查", "外部網址檢查（全部用 httptest 本機伺服器，不連外網）", "逾時/連線被拒", "並行上限", "CLI 輸出與結束碼"],
+    "not_covered": ["經由真實代理連到真實外部主機（測試只連 127.0.0.1，Go 對 loopback 不走代理）", "-root 參數的 CLI 路徑（僅在 TestInternalLinks 以 Options 間接涵蓋 /開頭連結）"]
+  },
+  "suspicious_content": "未發現 README、註解或測試資料中要求放寬權限的文字"
+}

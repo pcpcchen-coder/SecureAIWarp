@@ -1,0 +1,15 @@
+--- a/src/build.js	2026-11-26 10:02:05.822190915 +0000
++++ b/src/build.js	2026-11-26 10:02:05.833335398 +0000
+@@ -116,7 +116,11 @@
+   }
+   const siteTitle = opts.title || path.basename(input);
+ 
+-  if (opts.clean && fs.existsSync(output)) fs.rmSync(output, { recursive: true, force: true });
++  // Empty the folder's contents instead of removing the folder itself, so --clean also works
++  // when the output folder is a mount point (e.g. a folder picked by the user inside a sandbox).
++  if (opts.clean && fs.existsSync(output)) {
++    for (const name of fs.readdirSync(output)) fs.rmSync(path.join(output, name), { recursive: true, force: true });
++  }
+   fs.mkdirSync(output, { recursive: true });
+ 
+   const files = walk(input, output);

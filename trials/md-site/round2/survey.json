@@ -1,0 +1,38 @@
+{
+  "app": "md-site",
+  "version": "1.0.0",
+  "kind": "cli",
+  "entry_point": "bin/md-site.js",
+  "start_command": "node bin/md-site.js <筆記資料夾> -o <輸出資料夾> [--title T] [--clean] [--strict] [-q]",
+  "runtime": "Node.js >= 18（殼內有 /usr/local/sbin/node v22.23.5；npm/npx 殼內不存在）",
+  "files": {
+    "reads": ["使用者指定的輸入資料夾（遞迴）", "node_modules/highlight.js/styles/*.css", "src/style.css"],
+    "writes": ["使用者指定的輸出資料夾（-o）"],
+    "deletes": ["--clean 時刪除整個輸出資料夾（fs.rmSync recursive）；在殼內輸出資料夾是掛載點，rmdir 會 EROFS 失敗"],
+    "writes_into_app_dir": "否（npm run example 會寫 example/site/，但那只是範例腳本，殼內本就不可用）"
+  },
+  "network": {
+    "hosts_in_code": [],
+    "notes": "程式碼與相依套件皆無 http/https/net/dns/child_process 使用；README 與範例中的 https://nodejs.org、https://example.com 只是被轉成 <a> 連結的文字，不會被連線"
+  },
+  "env_vars": [],
+  "model_sdk": null,
+  "ai_tools": [],
+  "secrets_hardcoded": "未發現",
+  "tests": {
+    "command": "node --test test/build.test.js（package.json 的 npm test 用 shell glob test/*.test.js，殼內無 npm 且核心不做 shell 展開）",
+    "count": 16,
+    "covers": ["頁面產生與目錄結構", "首頁目錄", "語法上色與樣式表", ".md/無副檔名/wiki 連結改寫", "圖片與附件複製", "失效連結", "空白檔名編碼", "index.md 改名", "隱藏資料夾略過", "slug", "HTML 跳脫", "--clean 與錯誤輸入", "CLI 參數與結束碼"],
+    "not_covered": ["--clean 用在掛載點（殼內的選定資料夾）", "--title 以外的預設標題在殼內會變成 'notes'（取自 /warp/pick/notes 的資料夾名）"],
+    "starts_local_server": false,
+    "writes_app_dir": false,
+    "spawns_processes": "node --test 每個測試檔起子程序；CLI 端對端測試以 process.execPath 起子程序",
+    "stderr_assertion": "CLI 端對端測試斷言 stderr 為空字串；側錄模式設定 NODE_USE_ENV_PROXY=1 會讓 Node 印 UNDICI-EHPA 警告而失敗"
+  },
+  "supply_chain": {
+    "packages": ["gray-matter 4.0.3", "highlight.js 11.12.0", "marked 12.0.2", "js-yaml 3.15.2", "argparse 1.0.10", "esprima 4.0.1", "extend-shallow 2.0.1", "is-extendable 0.1.1", "kind-of 6.0.3", "section-matter 1.0.0", "sprintf-js 1.0.3", "strip-bom-string 1.0.0"],
+    "registry": "全部 resolved 自 registry.npmjs.org，無 install 腳本",
+    "concerns": ["gray-matter 預設啟用 JavaScript front matter 引擎（engines.javascript 用 eval）：筆記若以 ---js 開頭，其 front matter 會被當成 JS 執行。處理不可信的筆記時這是任意程式碼執行；殼限制了它的影響範圍（只能碰 notes 唯讀、site 可寫，無網路）"]
+  },
+  "section5_known_limits": "無：不使用金鑰、不連外"
+}

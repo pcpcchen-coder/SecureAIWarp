@@ -1,0 +1,77 @@
+# 由 warp draft 依側錄紀錄產生的宣告初稿。
+# 請逐條收緊、填寫每條授權的 purpose（一句人話），再執行 warp lint。
+warp: "0.1"
+app:
+  name: linkcheck
+  display_name: linkcheck
+  version: 0.1.0
+  kind: cli
+  entry:
+    - ./linkcheck
+    - /warp/pick/docs
+  digest: sha256:291ab14181699d4057de98e3eaa0c6f5f5576e7a0688e07f108a84fd30bf95be
+runtime:
+  isolation: process
+  resources:
+    cpu: 1
+    memory: 512Mi
+    pids: 128
+    disk: 1Gi
+  spawn: none
+  background: false
+files:
+  - path: ${APP_CACHE}
+    mode: rw
+    purpose: 只在執行自帶測試時使用：存放 Go 編譯的暫存檔，讓測試能編譯並執行。
+  - path: ${USER_PICK:docs}
+    mode: ro
+    purpose: 讀取你指定的文件資料夾裡的 Markdown 檔，找出裡面的連結；只讀不改。
+network:
+  egress:
+    - host: broken.example.net
+      port: 443
+      purpose: 連到這個網站，確認文件裡指向它的連結還能打開（側錄用的範例文件裡有這個網站的連結）。
+    - host: docs.example.org
+      port: 443
+      purpose: 連到這個網站，確認文件裡指向它的連結還能打開（側錄用的範例文件裡有這個網站的連結）。
+    - host: example.com
+      port: 443
+      purpose: 連到這個網站，確認文件裡指向它的連結還能打開（側錄用的範例文件裡有這個網站的連結）。
+    - host: redirect.example.net
+      port: 443
+      purpose: 連到這個網站，確認文件裡指向它的連結還能打開（側錄用的範例文件裡有這個網站的連結）。
+    - host: slow.example.net
+      port: 443
+      purpose: 連到這個網站，確認文件裡指向它的連結還能打開（側錄用的範例文件裡有這個網站的連結）。
+    - host: www.example.com
+      port: 443
+      purpose: 連到這個網站，確認文件裡指向它的連結還能打開（側錄用的範例文件裡有這個網站的連結）。
+exceptions: []
+denied_by_design:
+  - behavior: Go 工具鏈在使用者資料夾寫入使用統計（${APP_DATA}/.config/go/telemetry）
+    reason: 這是 Go 編譯工具自己的遙測紀錄，與檢查連結的功能無關，不授權。
+evidence:
+  - grant: files[0]
+    observed_in: .warp/evidence/trace-0001.json
+    triggered_by: /usr/local/go/bin/go test ./...
+  - grant: files[1]
+    observed_in: .warp/evidence/trace-0005.json
+    triggered_by: ./linkcheck -timeout 5s -retries 0 /warp/pick/docs
+  - grant: network.egress[0]
+    observed_in: .warp/evidence/trace-0005.json
+    triggered_by: ./linkcheck -timeout 5s -retries 0 /warp/pick/docs
+  - grant: network.egress[1]
+    observed_in: .warp/evidence/trace-0005.json
+    triggered_by: ./linkcheck -timeout 5s -retries 0 /warp/pick/docs
+  - grant: network.egress[2]
+    observed_in: .warp/evidence/trace-0005.json
+    triggered_by: ./linkcheck -timeout 5s -retries 0 /warp/pick/docs
+  - grant: network.egress[3]
+    observed_in: .warp/evidence/trace-0005.json
+    triggered_by: ./linkcheck -timeout 5s -retries 0 /warp/pick/docs
+  - grant: network.egress[4]
+    observed_in: .warp/evidence/trace-0005.json
+    triggered_by: ./linkcheck -timeout 5s -retries 0 /warp/pick/docs
+  - grant: network.egress[5]
+    observed_in: .warp/evidence/trace-0005.json
+    triggered_by: ./linkcheck -timeout 5s -retries 0 /warp/pick/docs

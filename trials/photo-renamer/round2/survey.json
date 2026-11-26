@@ -1,0 +1,50 @@
+{
+  "app": "photo-renamer",
+  "version": "0.1.0",
+  "kind": "cli",
+  "entry_points": {
+    "console_script": "photo-renamer = photo_renamer.cli:main (.venv/bin/photo-renamer; shebang hard-codes a host path, not usable in the shell)",
+    "module": ".venv/bin/python -m photo_renamer <preview|rename|undo> <folder>"
+  },
+  "start_command": [".venv/bin/python", "-m", "photo_renamer", "preview", "${USER_PICK:photos}"],
+  "subcommands": {
+    "preview": "read-only: lists photos in the folder, reads EXIF / mtime",
+    "rename": "renames photos in the folder (two-phase via .photo-renamer-tmp-* names) and writes .photo-renamer-journal.json inside the same folder; asks y/N unless -y",
+    "undo": "reads and rewrites/deletes .photo-renamer-journal.json in the folder and renames files back"
+  },
+  "files": {
+    "user_folder": "the photo folder passed on the command line: read in preview, read+write (rename, journal file, temp names) in rename/undo",
+    "app_dir_writes": "none by the app itself; pytest may try to write .pytest_cache/__pycache__ under /app (cache only)",
+    "home_or_xdg": "not used"
+  },
+  "network": {
+    "hosts": [],
+    "notes": "no network code found (no urllib/requests/socket/http imports in photo_renamer/)"
+  },
+  "env_vars": [],
+  "secrets": [],
+  "model_sdk": null,
+  "ai_tools": [],
+  "subprocess": "none (no subprocess/os.system usage)",
+  "dependencies": {
+    "runtime": ["Pillow>=9.0 (installed: pillow 13.0.0)"],
+    "test": ["pytest (installed: pytest 9.2.0, pluggy, iniconfig, packaging, pygments)"],
+    "suspicious": "none observed; all are well-known PyPI packages"
+  },
+  "venv": {
+    "python": ".venv/bin/python -> python3 -> /usr/local/bin/python3 (/usr/local/bin/python3.13)",
+    "editable_install_note": "pyvenv.cfg 'command' line shows the venv was created at a different path (.../trial/apps/photo-renamer/.venv); editable-install finder in site-packages likely points to that old path. Running with cwd=/app and 'python -m' puts /app on sys.path so the package is still importable."
+  },
+  "tests": {
+    "command": ".venv/bin/python -m pytest -v",
+    "count": 19,
+    "uses_tmp_path": true,
+    "starts_local_server": false,
+    "writes_app_dir": "only pytest cache (.pytest_cache) - harmless warning expected",
+    "covered": ["EXIF read + mtime fallback", "invalid/unreadable EXIF", "preview no-op", "rename + extension normalisation", "same-second suffixes", "already-named files", "case-insensitive collisions", "name swap", "re-run no-op", "non-photo files ignored", "undo single/multiple/refuse-overwrite/no-journal", "CLI confirm prompt, --yes, undo, bad folder"],
+    "not_covered": ["CLI preview/rename/undo against a real user-picked folder through the shell (covered in recording by running the CLI on synthetic photos)", "HEIC/RAW EXIF (Pillow plugin dependent)"]
+  },
+  "hardcoded_keys": "none found",
+  "known_limits_section5": "none apply: no keys, no user-data-dependent hosts",
+  "pre_existing_host_artifacts": "__pycache__ and .pytest_cache already exist in the app dir (from an earlier host run); left untouched"
+}

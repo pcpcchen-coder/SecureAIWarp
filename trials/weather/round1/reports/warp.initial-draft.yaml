@@ -1,0 +1,52 @@
+# 由 warp draft 依側錄紀錄產生的宣告初稿。
+# 請逐條收緊、填寫每條授權的 purpose（一句人話），再執行 warp lint。
+warp: "0.1"
+app:
+  name: weather
+  display_name: weather
+  version: 0.1.0
+  kind: cli
+  entry:
+    - .venv/bin/python
+    - -m
+    - weather_cli
+    - --clear-cache
+  digest: sha256:a42d851586c7f29d84366a9a8324f8d9a1d65f131e15999d5bb152378631c176
+runtime:
+  isolation: process
+  resources:
+    cpu: 1
+    memory: 512Mi
+    pids: 128
+    disk: 1Gi
+  spawn: none
+  background: false
+files:
+  - path: ${APP_DATA}
+    mode: rw
+    purpose: （待填寫：用一句人話說明用途）
+  - path: ${APP_CACHE}
+    mode: rw
+    purpose: （待填寫：用一句人話說明用途）
+network:
+  egress:
+    - host: api.open-meteo.com
+      port: 443
+      purpose: （待填寫：用一句人話說明用途）
+    - host: geocoding-api.open-meteo.com
+      port: 443
+      purpose: （待填寫：用一句人話說明用途）
+exceptions: []
+evidence:
+  - grant: files[0]
+    observed_in: .warp/evidence/trace-0004.json
+    triggered_by: .venv/bin/python -m weather_cli --add '台北'
+  - grant: files[1]
+    observed_in: .warp/evidence/trace-0003.json
+    triggered_by: .venv/bin/python -m weather_cli '台北'
+  - grant: network.egress[0]
+    observed_in: .warp/evidence/trace-0003.json
+    triggered_by: .venv/bin/python -m weather_cli '台北'
+  - grant: network.egress[1]
+    observed_in: .warp/evidence/trace-0003.json
+    triggered_by: .venv/bin/python -m weather_cli '台北'

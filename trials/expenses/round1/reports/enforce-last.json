@@ -1,0 +1,40 @@
+{
+  "time": "2026-11-26T09:33:46Z",
+  "manifest_sha256": "784de086344a066c7413f42816ecff838ad03e21698737c6aaf1a04c3acf388e",
+  "app_digest": "sha256:93e93061cd7faf8982f7313db78d32edd7e91696a697d1438ef3d784c5d00709",
+  "command": [
+    ".venv/bin/python",
+    "-m",
+    "pytest",
+    "-q"
+  ],
+  "exit_code": 0,
+  "denied": 0,
+  "identity": "root",
+  "resources": [
+    {
+      "resource": "memory",
+      "limit": "512Mi",
+      "scope": "shell",
+      "mechanism": "cgroup v1"
+    },
+    {
+      "resource": "pids",
+      "limit": "128",
+      "scope": "shell",
+      "mechanism": "cgroup v1"
+    },
+    {
+      "resource": "disk",
+      "limit": "1Gi",
+      "scope": "file",
+      "mechanism": "RLIMIT_FSIZE＋/tmp 容量"
+    },
+    {
+      "resource": "cpu",
+      "limit": "1",
+      "scope": "none",
+      "mechanism": "（尚未實作）"
+    }
+  ]
+}

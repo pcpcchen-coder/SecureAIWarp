@@ -1,0 +1,39 @@
+{
+  "time": "2026-11-26T10:06:56Z",
+  "manifest_sha256": "0bcca5854ec8be08f72d80b966b7fd23e8ef1093ceb33ed9adc36dec0d6003cc",
+  "app_digest": "sha256:d50b7970892a8deb158e0715b3dc5fa246f1c8013ea303685fc33cb9f5360062",
+  "command": [
+    "node",
+    "--test",
+    "test/build.test.js"
+  ],
+  "exit_code": 0,
+  "denied": 0,
+  "identity": "root",
+  "resources": [
+    {
+      "resource": "memory",
+      "limit": "512Mi",
+      "scope": "shell",
+      "mechanism": "cgroup v1"
+    },
+    {
+      "resource": "pids",
+      "limit": "128",
+      "scope": "shell",
+      "mechanism": "cgroup v1"
+    },
+    {
+      "resource": "disk",
+      "limit": "1Gi",
+      "scope": "file",
+      "mechanism": "RLIMIT_FSIZE＋/tmp 容量"
+    },
+    {
+      "resource": "cpu",
+      "limit": "1",
+      "scope": "none",
+      "mechanism": "（尚未實作）"
+    }
+  ]
+}
