@@ -996,7 +996,9 @@ func (s *session) summary(res *Result) {
 		default:
 			s.errf("側錄紀錄已寫入 %s", res.TracePath)
 		}
-		if res.ExitCode != 0 {
+		// 130/143 (SIGINT/SIGTERM) is how servers are normally stopped;
+		// warp draft uses those traces (see internal/draft).
+		if res.ExitCode != 0 && res.ExitCode != 130 && res.ExitCode != 143 && s.opt.TraceDir == "" {
 			s.errf("注意：指令以結束碼 %d 結束。warp draft 預設不採用失敗的側錄當證據；不需要的側錄檔可移出 .warp/evidence/（編號不會重用）", res.ExitCode)
 		}
 	}
