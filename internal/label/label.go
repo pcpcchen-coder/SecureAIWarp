@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/pcpcchen-coder/SecureAIWarp/internal/evidence"
 	"github.com/pcpcchen-coder/SecureAIWarp/internal/manifest"
 	"github.com/pcpcchen-coder/SecureAIWarp/internal/report"
 )
@@ -39,9 +40,16 @@ type Verification struct {
 	ProbeTotal     int    `json:"probe_total"`
 	ProbeNotImpl   int    `json:"probe_not_implemented"`
 	ProbeCurrent   bool   `json:"probe_current"`
+	// The Enforce* fields describe only the most recent enforce run for this
+	// manifest and app content: which command it ran, its exit code and
+	// when. They are facts about that one run, not a functional verdict.
 	EnforceCurrent bool   `json:"enforce_current"`
 	EnforceExit    int    `json:"enforce_exit_code"`
 	EnforceCommand string `json:"enforce_command,omitempty"`
+	EnforceTime    string `json:"enforce_time,omitempty"`
+	EnforceDenied  int    `json:"enforce_denied"`
+	// TrustBasis says which runs the trust level was derived from.
+	TrustBasis string `json:"trust_basis,omitempty"`
 	// RunIdentity and Resources describe the most recent current probe (or
 	// enforce) run: which OS identity the core ran as and how each resource
 	// limit was actually enforced on this machine.
@@ -204,7 +212,9 @@ func Build(l *manifest.Loaded, res *manifest.Result, appRoot string) *Label {
 	if e := report.LoadEnforce(appRoot); e != nil && e.ManifestSHA256 == l.SHA256 && e.AppDigest == digest {
 		v.EnforceCurrent = true
 		v.EnforceExit = e.ExitCode
-		v.EnforceCommand = strings.Join(e.Command, " ")
+		v.EnforceCommand = evidence.CommandString(e.Command)
+		v.EnforceTime = e.Time
+		v.EnforceDenied = e.Denied
 		if v.Resources == nil {
 			v.RunIdentity, v.Resources = e.Identity, e.Resources
 		}
@@ -221,6 +231,9 @@ func Build(l *manifest.Loaded, res *manifest.Result, appRoot string) *Label {
 		lb.TrustLevel = "L2"
 	default:
 		lb.TrustLevel = "L1"
+	}
+	if lb.TrustLevel == "L2" {
+		v.TrustBasis = fmt.Sprintf("此版宣告的探針全部被擋下，且最後一次強制執行（%s，%s）結束碼為 0；結束碼只是那一次執行的結果，不代表功能測試的結果", v.EnforceCommand, v.EnforceTime)
 	}
 	lb.Notes = []string{
 		"風險分數只用於比較與排序，不是絕對的安全評級。",
@@ -333,29 +346,32 @@ func Render(lb *Label) string {
 		}
 	}
 	v := lb.Verification
-	probe := "探針：尚未針對此版宣告執行"
+	probe := "尚未針對此版宣告執行"
 	if v.ProbeCurrent {
-		probe = fmt.Sprintf("探針 %d/%d 被擋下", v.ProbeBlocked, v.ProbeTotal)
+		probe = fmt.Sprintf("%d/%d 被擋下", v.ProbeBlocked, v.ProbeTotal)
 		if v.ProbeNotImpl > 0 {
 			probe += fmt.Sprintf("（另 %d 項尚未實作）", v.ProbeNotImpl)
 		}
 	}
-	enf := "強制模式：尚未執行"
+	enf := "尚未以此版宣告執行"
 	if v.EnforceCurrent {
-		if v.EnforceExit == 0 {
-			enf = "強制模式執行通過"
-		} else {
-			enf = fmt.Sprintf("強制模式執行失敗（結束碼 %d）", v.EnforceExit)
-		}
+		enf = fmt.Sprintf("$ %s，結束碼 %d，阻擋 %d 次（%s）", v.EnforceCommand, v.EnforceExit, v.EnforceDenied, v.EnforceTime)
 	}
 	for _, r := range DegradedResources(v.Resources) {
 		row(fmt.Sprintf("　　⚠ %s上限在此機器上%s（%s）", orRaw(resourceNames, r.Resource), orRaw(scopeNames, r.Scope), r.Mechanism))
 	}
-	row("驗證　　　" + probe + "｜" + enf)
+	row("探針　　　" + probe)
+	row("最後一次強制執行　" + enf)
+	if v.EnforceCurrent {
+		row("　　（只是這一次執行的結束碼，不是功能驗證結果；功能測試結果請看安裝報告）")
+	}
 	if v.RunIdentity != "" {
 		row("執行身分　" + v.RunIdentity)
 	}
 	row("信任等級　" + orRaw(trustNames, lb.TrustLevel))
+	if v.TrustBasis != "" {
+		row("　　依據：" + v.TrustBasis)
+	}
 	if lb.App.AuthorNote != "" {
 		row("作者說明　「" + lb.App.AuthorNote + "」← 未經驗證的自述")
 	}

@@ -1,6 +1,7 @@
 package label
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -91,6 +92,38 @@ func TestResourceCoverageIsHonest(t *testing.T) {
 		}
 		if !strings.Contains(note(lb), scopeNames[c.scope]) || !strings.Contains(out, "執行身分　uid=1000") {
 			t.Errorf("scope %s: coverage note %q", c.scope, note(lb))
+		}
+	}
+}
+
+// TestEnforceLineStatesFacts: the label states which command the last
+// enforce run executed, its exit code and time, and never calls it a pass;
+// an L2 label says which runs it is based on.
+func TestEnforceLineStatesFacts(t *testing.T) {
+	m := &manifest.Manifest{App: manifest.App{Name: "demo", Version: "1"}, Runtime: manifest.Runtime{Isolation: "process", Spawn: "none"}}
+	l := &manifest.Loaded{Manifest: m, SHA256: "x"}
+	dir := t.TempDir()
+	digest, _ := manifest.ComputeDigest(dir)
+	report.WriteProbe(dir, &report.Probe{ManifestSHA256: "x", AppDigest: digest, Items: []report.ProbeItem{{ID: "a", Status: report.Blocked}}})
+	for _, code := range []int{0, 130} {
+		report.WriteEnforce(dir, &report.Enforce{ManifestSHA256: "x", AppDigest: digest, Command: []string{"python3", "-m", "pytest", "-k", "a or b"},
+			ExitCode: code, Denied: 2, Time: "2026-11-26T01:02:03Z"})
+		lb := Build(l, &manifest.Result{}, dir)
+		out := Render(lb)
+		for _, want := range []string{"最後一次強制執行", "$ python3 -m pytest -k 'a or b'", fmt.Sprintf("結束碼 %d", code), "2026-11-26T01:02:03Z", "不是功能驗證結果"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("exit %d: label missing %q:\n%s", code, want, out)
+			}
+		}
+		if strings.Contains(out, "通過") || strings.Contains(out, "失敗") {
+			t.Errorf("exit %d: the label must state facts, not pass/fail:\n%s", code, out)
+		}
+		if lb.Verification.EnforceTime != "2026-11-26T01:02:03Z" || lb.Verification.EnforceCommand != "python3 -m pytest -k 'a or b'" {
+			t.Errorf("label.json: %+v", lb.Verification)
+		}
+		wantL2 := code == 0
+		if (lb.TrustLevel == "L2") != wantL2 || strings.Contains(out, "依據：") != wantL2 {
+			t.Errorf("exit %d: trust %s\n%s", code, lb.TrustLevel, out)
 		}
 	}
 }
