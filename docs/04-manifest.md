@@ -47,7 +47,14 @@ files:
 （第 1 期）
 - `TMP` 不再是變數：殼內一律有私有、拋棄式、有容量上限的 `/tmp`，不需要授權。
 - 不支援絕對路徑（檢查器回報 `files-absolute` 錯誤）；硬性規則中的「家目錄、系統目錄、憑證目錄、容器控制介面」改在**執行期**對實際掛載來源（應用根目錄與每個 `USER_PICK`）檢查，違反即拒絕執行。
-- `<名稱>` 為小寫英數字、`-`、`_`（最多 32 字元）。殼內路徑：`${APP_DATA}` → `/warp/data`、`${APP_CACHE}` → `/warp/cache`、`${USER_PICK:x}` → `/warp/pick/x`（並以環境變數 `APP_DATA`、`APP_CACHE`、`WARP_PICK_X` 告知應用）。
+- `<名稱>` 以小寫英文字母開頭，只含小寫英數字、`-`、`_`（最多 32 字元）；`warp record`／`enforce` 的 `--pick` 名稱不合格式時直接拒絕執行並說明規則。
+  殼內路徑：`${APP_DATA}` → `/warp/data`、`${APP_CACHE}` → `/warp/cache`、`${USER_PICK:x}` → `/warp/pick/x`
+  （並以環境變數 `APP_DATA`、`APP_CACHE`、`WARP_PICK_<名稱轉大寫、- 換成 _>` 告知應用，例如 `photo-in` → `WARP_PICK_PHOTO_IN`）。
+- `files[].path` 只能是這三種變數**本身**；`${APP_DATA}/子路徑` 之類的寫法是無效路徑（`format` 錯誤）。
+- 選定的資料夾不能位於應用目錄或核心狀態目錄內（執行期拒絕）。
+- `app.entry` 與 `warp record`／`enforce` 在 `--` 之後的指令中，`${APP_DATA}`、`${APP_CACHE}`、`${USER_PICK:<名稱>}` 會被核心以字面替換成上述殼內路徑
+  （也可以出現在參數中間，例如 `--db=${APP_DATA}/x.db`；不做任何其他 shell 展開）。側錄檔與 `triggered_by` 保留未替換的原樣。
+  `app.entry` 引用了 `files` 中沒有宣告的變數、或名稱無效時，檢查器以 `entry-var` 拒收；執行期指令引用了這次沒有掛載的變數則拒絕執行。
 - `APP_DATA` 存在核心的狀態目錄（預設 `~/.local/state/securewarp/apps/…`），不在應用目錄內。
 
 ### 機密綁定目的地
@@ -116,6 +123,7 @@ evidence:
 | 對外連線不得指向主機本機（`localhost`、`127.0.0.0/8`、`::1`）（第 1 期新增） | 等同存取主機上的服務 |
 | 名稱含高風險動作（send、email、pay、delete、exec、run…）的工具，風險不得低於 `high`（第 1 期新增） | 核心內建的下限 |
 | 機密的 `bind.host` 必須列在對外連線中、只能注入一般標頭（第 1 期新增） | 注入點必須明確 |
+| `app.entry` 中的路徑佔位字必須是 `files` 中宣告的路徑（`entry-var`，第 1 期新增） | 強制模式不會掛載未宣告的路徑 |
 
 內容雜湊（`app.digest`）的算法：對應用根目錄下（排除最上層的 `.warp/`、`.git/`，這兩者在殼內也被遮蔽）每個檔案、目錄、符號連結的
 相對路徑、類型、權限位元與內容雜湊排序後再取 SHA-256；`warp digest` 可印出目前的值。
@@ -192,3 +200,8 @@ exceptions:
 - **`network.ingress`**：只支援 `expose: loopback` 搭配 `auth: local-token`，而且只代理 HTTP（WebSocket 升級未經測試）。
 - **`ai`、`data`、`supply_chain`**：只檢查結構與參照（例如 `data.flows[].to` 必須指向存在的 `network.egress[i]`），執行期不強制，標籤標示為「僅聲明」。
 - **`denied_by_design`**：`warp draft` 會把側錄中被核心擋下的連線自動列入。
+- **`warp draft`**：預設略過結束碼非 0 的側錄（130、143——被 Ctrl+C／SIGTERM 中斷——視為正常停止並採用；`--include-failed` 改為採用並標示）；
+  `app.version` 取自應用根目錄的 `package.json` 或 `pyproject.toml`，找不到時暫填 `0.1.0`；`app.kind` 一律暫填 `cli`（側錄中有監聽不代表是網頁應用，
+  輸出會列出是哪個指令監聽了哪個埠）；`app.entry` 取自最後一次採用的側錄指令（含參數），輸出會提示確認。
+  機密只出現在網址或請求內容時無法授權（閘門只注入標頭，`app-visible` 也需要標頭綁定與標頭證據），初稿會如實說明。
+- **宣告中沒有設定環境變數的欄位**：殼內的環境變數由核心產生（見 [03](03-architecture.md) 第 6.1 節），應用需要的設定請以指令參數或 `env 名稱=值 <指令>` 寫在 `app.entry` 中。
