@@ -80,6 +80,9 @@ type Egress struct {
 	hostAddrs map[netip.Addr]bool
 	hostAt    time.Time
 	wg        sync.WaitGroup
+	// testDial, if set (unit tests only), replaces the final TCP dial of
+	// an already decided address.
+	testDial func(ctx context.Context, addr string) (net.Conn, error)
 }
 
 // NewEgress builds the gate.
@@ -206,7 +209,11 @@ func (g *Egress) dialIPs(ctx context.Context, ips []netip.Addr, port int) (net.C
 	var lastErr error
 	d := net.Dialer{Timeout: g.cfg.DialTimeout}
 	for _, ip := range ips {
-		c, err := d.DialContext(ctx, "tcp", netip.AddrPortFrom(ip, uint16(port)).String())
+		addr := netip.AddrPortFrom(ip, uint16(port)).String()
+		if g.testDial != nil {
+			return g.testDial(ctx, addr)
+		}
+		c, err := d.DialContext(ctx, "tcp", addr)
 		if err == nil {
 			return c, nil
 		}
@@ -419,6 +426,20 @@ func (g *Egress) handleConnect(c net.Conn, br *bufio.Reader, req *http.Request) 
 	}
 	g.logDecision("connect", target, d, "inspect")
 	io.WriteString(c, "HTTP/1.1 200 Connection Established\r\n\r\n")
+	// A CONNECT tunnel may carry plain HTTP (Node's fetch always tunnels,
+	// even for http:// URLs). Look at the first byte before deciding to
+	// terminate TLS; plain HTTP is inspected and forwarded request by
+	// request, exactly like an absolute-form proxy request.
+	c.SetReadDeadline(time.Now().Add(20 * time.Second))
+	first, err := br.Peek(1)
+	c.SetReadDeadline(time.Time{})
+	if err != nil {
+		return
+	}
+	if first[0] != 0x16 {
+		g.serveTunnelHTTP(c, br, host, port, d.rule, target)
+		return
+	}
 	leaf, err := g.cfg.CA.Leaf(host)
 	if err != nil {
 		return
@@ -455,6 +476,41 @@ func (g *Egress) handleConnect(c net.Conn, br *bufio.Reader, req *http.Request) 
 		}
 		tc.SetReadDeadline(time.Time{})
 		if !g.forward(tc, r, "https", host, port, d.rule) {
+			return
+		}
+	}
+}
+
+// serveTunnelHTTP inspects plain HTTP carried inside an approved CONNECT
+// tunnel. The destination was already decided for the tunnel; forward still
+// checks every request's Host header against it and re-applies the full
+// decision when it dials.
+func (g *Egress) serveTunnelHTTP(c net.Conn, br *bufio.Reader, host string, port int, rule *Rule, target string) {
+	lim := &headLimiter{r: br}
+	tbr := bufio.NewReader(lim)
+	for n := 0; ; n++ {
+		c.SetReadDeadline(time.Now().Add(5 * time.Minute))
+		lim.arm()
+		r, err := http.ReadRequest(tbr)
+		lim.disarm()
+		if err != nil {
+			if errors.Is(err, errHeadTooLarge) {
+				g.cfg.Ledger.Log("egress", "request", "deny", target, "請求標頭超過大小上限")
+				writeBlocked(c, http.StatusRequestHeaderFieldsTooLarge, "請求標頭過大")
+				return
+			}
+			if n == 0 && !errors.Is(err, io.EOF) {
+				g.cfg.Ledger.Log("egress", "tunnel", "deny", target, "隧道內容既不是 TLS 也不是 HTTP，無法檢視："+err.Error())
+			}
+			return
+		}
+		c.SetReadDeadline(time.Time{})
+		if r.Method == http.MethodConnect {
+			g.logDecision("request", target, decision{reason: "隧道內不接受 CONNECT"}, "")
+			writeBlocked(c, http.StatusForbidden, "隧道內不接受 CONNECT")
+			return
+		}
+		if !g.forward(c, r, "http", host, port, rule) {
 			return
 		}
 	}

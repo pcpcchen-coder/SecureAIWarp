@@ -16,6 +16,8 @@ import (
 	"testing"
 	"testing/iotest"
 	"time"
+
+	"github.com/pcpcchen-coder/SecureAIWarp/internal/evidence"
 )
 
 func TestReplacingReaderAcrossBoundaries(t *testing.T) {
@@ -262,5 +264,145 @@ func TestTunnelWithoutSNIIsRefused(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("a TLS hello without SNI was not refused")
+	}
+}
+
+// tunnelGate serves the gate on a local listener; every decided dial goes to
+// the given upstream instead of the resolved (public, test-only) address.
+func tunnelGate(t *testing.T, mode string, upstream string) (proxy string, rec *evidence.Recorder) {
+	t.Helper()
+	r := &Resolver{static: map[string][]netip.Addr{"docs.example.org": {netip.MustParseAddr("93.184.216.34")}}}
+	ca, err := NewCA("t", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec = evidence.NewRecorder()
+	g := NewEgress(EgressConfig{Mode: mode, Rules: []Rule{{Host: "docs.example.org", Port: 80}}, Resolver: r, CA: ca, Recorder: rec})
+	g.testDial = func(ctx context.Context, addr string) (net.Conn, error) {
+		if addr != "93.184.216.34:80" {
+			t.Errorf("dial to unexpected address %s", addr)
+		}
+		return (&net.Dialer{}).DialContext(ctx, "tcp", upstream)
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go g.Serve(ln)
+	return ln.Addr().String(), rec
+}
+
+// TestPlainHTTPInsideConnect: a CONNECT tunnel carrying plain HTTP (what
+// Node's fetch does for http:// URLs) must work when the gate inspects the
+// tunnel (record mode always does), and the Host header must still match.
+func TestPlainHTTPInsideConnect(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "hello %s %s", r.Host, r.URL.Path)
+	}))
+	defer up.Close()
+	for _, mode := range []string{ModeRecord, ModeEnforce} {
+		proxy, rec := tunnelGate(t, mode, up.Listener.Addr().String())
+		c, err := net.Dial("tcp", proxy)
+		if err != nil {
+			t.Fatal(err)
+		}
+		br := bufio.NewReader(c)
+		fmt.Fprint(c, "CONNECT docs.example.org:80 HTTP/1.1\r\nHost: docs.example.org:80\r\n\r\n")
+		resp, err := http.ReadResponse(br, nil)
+		if err != nil || resp.StatusCode != 200 {
+			t.Fatalf("%s: CONNECT: %v %v", mode, resp, err)
+		}
+		for i := 0; i < 2; i++ { // keep-alive inside the tunnel
+			fmt.Fprint(c, "GET /page HTTP/1.1\r\nHost: docs.example.org\r\n\r\n")
+			resp, err = http.ReadResponse(br, nil)
+			if err != nil {
+				t.Fatalf("%s: request %d: %v", mode, i, err)
+			}
+			b, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode != 200 || string(b) != "hello docs.example.org /page" {
+				t.Fatalf("%s: request %d: HTTP %d %q", mode, i, resp.StatusCode, b)
+			}
+		}
+		c.Close()
+		if mode == ModeRecord {
+			// When the tunnel is inspected, a Host header naming another
+			// host is refused. (An uninspected enforce-mode tunnel is a
+			// byte pipe to the already decided address.)
+			c, _ := net.Dial("tcp", proxy)
+			br := bufio.NewReader(c)
+			fmt.Fprint(c, "CONNECT docs.example.org:80 HTTP/1.1\r\nHost: docs.example.org:80\r\n\r\nGET / HTTP/1.1\r\nHost: evil.example\r\n\r\n")
+			http.ReadResponse(br, nil)
+			resp, err = http.ReadResponse(br, nil)
+			c.Close()
+			if err != nil || resp.StatusCode != http.StatusForbidden || resp.Header.Get("X-Warp-Blocked") == "" {
+				t.Fatalf("%s: mismatched Host must be blocked: %v %v", mode, resp, err)
+			}
+			found := false
+			for _, e := range rec.Events() {
+				if e.Channel == evidence.ChanEgress && e.Host == "docs.example.org" && e.Port == 80 && e.Decision == "allowed" {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("record mode did not record the tunnel as allowed: %+v", rec.Events())
+			}
+		}
+	}
+}
+
+// TestConnectToLoopbackStillDenied: the gate itself refuses tunnels and
+// requests aimed at loopback, whatever the shell's NO_PROXY says.
+func TestConnectToLoopbackStillDenied(t *testing.T) {
+	for _, mode := range []string{ModeRecord, ModeEnforce} {
+		proxy, _ := tunnelGate(t, mode, "127.0.0.1:1")
+		for _, req := range []string{
+			"CONNECT 127.0.0.1:8123 HTTP/1.1\r\nHost: 127.0.0.1:8123\r\n\r\n",
+			"CONNECT localhost:8123 HTTP/1.1\r\nHost: localhost:8123\r\n\r\n",
+			"CONNECT [::1]:8123 HTTP/1.1\r\nHost: [::1]:8123\r\n\r\n",
+			"GET http://127.0.0.1:8123/ HTTP/1.1\r\nHost: 127.0.0.1:8123\r\n\r\n",
+			"GET http://localhost:8123/ HTTP/1.1\r\nHost: localhost:8123\r\n\r\n",
+		} {
+			c, err := net.Dial("tcp", proxy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fmt.Fprint(c, req)
+			resp, err := http.ReadResponse(bufio.NewReader(c), nil)
+			c.Close()
+			if err != nil || resp.StatusCode != http.StatusForbidden || resp.Header.Get("X-Warp-Blocked") == "" {
+				t.Fatalf("%s: %q must be blocked: %v %v", mode, strings.SplitN(req, "\r\n", 2)[0], resp, err)
+			}
+		}
+	}
+}
+
+// TestTunnelHTTPHeadIsBounded: plain HTTP inside an inspected tunnel is
+// subject to the same request-head bound as every other request.
+func TestTunnelHTTPHeadIsBounded(t *testing.T) {
+	proxy, _ := tunnelGate(t, ModeRecord, "127.0.0.1:1")
+	c, err := net.Dial("tcp", proxy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	br := bufio.NewReader(c)
+	fmt.Fprint(c, "CONNECT docs.example.org:80 HTTP/1.1\r\nHost: docs.example.org:80\r\n\r\n")
+	if resp, err := http.ReadResponse(br, nil); err != nil || resp.StatusCode != 200 {
+		t.Fatalf("CONNECT: %v %v", resp, err)
+	}
+	go func() {
+		fmt.Fprint(c, "GET / HTTP/1.1\r\nHost: docs.example.org\r\nX-Big: ")
+		chunk := bytes.Repeat([]byte("a"), 64<<10)
+		for i := 0; i < 40; i++ { // 2.5 MiB > maxRequestHead
+			if _, err := c.Write(chunk); err != nil {
+				return
+			}
+		}
+	}()
+	resp, err := http.ReadResponse(br, nil)
+	if err != nil || resp.StatusCode != http.StatusRequestHeaderFieldsTooLarge {
+		t.Fatalf("an oversized head inside the tunnel must be refused: %v %v", resp, err)
 	}
 }
